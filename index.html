@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Aimorés 3D · lado do Hospital</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#9fb4c6;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#eef2f7}
+#app{position:fixed;inset:0}#app canvas{display:block;touch-action:none}
+#labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+.lbl{position:absolute;left:0;top:0;white-space:nowrap;font-weight:600;pointer-events:none;will-change:transform}
+.lbl.nb{font-size:15px;color:#fff;text-shadow:0 1px 3px #000,0 0 8px rgba(0,0,0,.6);letter-spacing:.3px;text-transform:uppercase}
+.lbl.poi{font-size:12px;background:rgba(15,23,42,.72);padding:3px 8px;border-radius:10px;border:1px solid rgba(255,255,255,.25)}
+.lbl.mark{font-size:12px;background:rgba(15,23,42,.85);padding:3px 8px;border-radius:8px;border:2px solid #fff;pointer-events:auto}
+.glass{background:rgba(15,23,42,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+#top{position:fixed;left:12px;top:12px;padding:10px 12px;max-width:min(560px,calc(100vw - 24px))}
+#top h1{margin:0 0 2px;font-size:17px}#top .sub{font-size:11.5px;opacity:.75;margin-bottom:8px}
+.views{display:flex;flex-wrap:wrap;gap:6px}
+button,.btn{background:rgba(255,255,255,.1);color:#eef2f7;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:6px 10px;font-size:12.5px;cursor:pointer;font-family:inherit}
+button:hover,.btn:hover{background:rgba(255,255,255,.2)}button.on{background:#2563eb;border-color:#60a5fa}
+#layers{position:fixed;left:12px;bottom:12px;padding:10px 12px;font-size:12.5px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;max-width:min(560px,calc(100vw - 24px))}
+#layers label{display:flex;align-items:center;gap:5px;cursor:pointer}
+#layers input[type=range]{width:110px}select{background:#1e293b;color:#eef2f7;border:1px solid #475569;border-radius:7px;padding:3px}
+#mkpanel{position:fixed;right:12px;top:12px;bottom:12px;width:320px;display:flex;flex-direction:column;transition:transform .25s}
+#mkpanel.closed{transform:translateX(calc(100% - 44px))}
+#mkhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1)}
+#mkhead b{flex:1;font-size:15px}#mktoggle{padding:4px 9px}
+#mkbody{overflow:auto;padding:10px 12px;font-size:13px}
+#mkbody h3{font-size:12px;text-transform:uppercase;letter-spacing:.6px;opacity:.7;margin:14px 0 6px}
+.modes{display:flex;gap:6px}.modes button{flex:1}.hint{font-size:11.5px;opacity:.75;margin-top:6px}
+.cat,.mk{display:flex;align-items:center;gap:7px;padding:6px 7px;border-radius:9px;cursor:pointer}
+.cat:hover,.mk:hover{background:rgba(255,255,255,.07)}.cat.sel{background:rgba(37,99,235,.35);outline:1px solid #60a5fa}.mk.sel{background:rgba(255,255,255,.1)}
+.cat .nm,.mk .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ct{font-size:11px;opacity:.8;background:rgba(255,255,255,.12);padding:1px 7px;border-radius:9px}
+.sw{width:16px;height:16px;border-radius:50%;display:inline-block;border:2px solid rgba(255,255,255,.7);flex:none}
+.ic{padding:2px 6px;font-size:12px;background:transparent;border-color:transparent}
+.form{display:flex;flex-direction:column;gap:6px;padding:8px;background:rgba(255,255,255,.05);border-radius:9px;margin:4px 0 8px}
+.form input,.form textarea,.form select{background:#0f172a;color:#eef2f7;border:1px solid #475569;border-radius:7px;padding:6px 8px;font:inherit}
+.form input[type=color]{height:34px;padding:2px}
+.presets{display:flex;flex-wrap:wrap;gap:6px}.pick{cursor:pointer;width:22px;height:22px}
+details summary{cursor:pointer;padding:6px 2px;color:#93c5fd;font-weight:600}
+.mgrp{display:flex;align-items:center;gap:7px;font-size:12px;opacity:.85;margin-top:8px}
+.coord{font-size:11px;opacity:.7;font-family:ui-monospace,monospace}
+.io{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+#toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%) translateY(20px);opacity:0;transition:.25s;padding:9px 14px;font-size:13px;pointer-events:none}
+#toast.show{opacity:1;transform:translateX(-50%)}
+#loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(#7fa3c4,#c9d6e2);z-index:50;transition:opacity .6s}
+#loading.done{opacity:0;pointer-events:none}#loading h2{margin:0 0 10px;font-size:22px;text-shadow:0 1px 4px rgba(0,0,0,.4)}
+.spin{width:38px;height:38px;border:4px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite;margin-bottom:12px}@keyframes sp{to{transform:rotate(360deg)}}
+#help{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);opacity:0;pointer-events:none;transition:.2s;width:min(520px,92vw);padding:16px 18px;font-size:13.5px;line-height:1.5;z-index:20}
+#help.show{opacity:1;pointer-events:auto;transform:translate(-50%,-50%)}#help h3{margin:0 0 8px}
+#mkstatus{font-size:12px;opacity:.85;color:#93c5fd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%}
+.mob{display:none}.grab{display:none}.views .mob{order:-1}
+@media (max-width:760px){
+ .mob{display:inline-block}
+ #top{left:8px;right:8px;top:8px;padding:8px 10px;max-width:none}#top h1{font-size:15px;margin-bottom:6px}#top .sub{display:none}
+ .views{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}.views::-webkit-scrollbar{display:none}
+ .views button{flex:none;min-height:40px;font-size:14px;padding:8px 12px}
+ #layers{display:none;left:8px;right:8px;top:100px;bottom:auto;max-width:none;font-size:14px;gap:12px 16px}#layers.open{display:flex}
+ #layers input[type=checkbox]{width:20px;height:20px}#layers select{font-size:15px;padding:6px}#layers input[type=range]{width:140px}
+ #mkpanel{left:0;right:0;bottom:0;top:auto;width:auto;height:62vh;border-radius:18px 18px 0 0;border-bottom:none}
+ #mkpanel.closed{transform:translateY(calc(100% - 58px))}
+ #mkhead{min-height:58px;padding:12px 14px 8px;position:relative;cursor:pointer}#mkhead b{flex:none;font-size:16px}#mkstatus{flex:1;text-align:right;max-width:none}
+ .grab{display:block;position:absolute;left:50%;top:5px;width:42px;height:5px;margin-left:-21px;border-radius:3px;background:rgba(255,255,255,.35)}
+ #mktoggle{min-width:44px;min-height:38px;font-size:16px}
+ #mkbody{font-size:15px;padding:10px 14px 24px}
+ .modes button{min-height:46px;font-size:15px}
+ .cat,.mk{padding:10px 8px;min-height:48px}.ic{padding:8px 11px;font-size:17px}
+ .sw{width:20px;height:20px}.pick{width:32px;height:32px}.presets{gap:9px}
+ .form input,.form textarea,.form select{font-size:16px;padding:10px}.form button,.io button,.io .btn{min-height:44px;font-size:15px}
+ details summary{padding:10px 2px;font-size:15px}
+ #toast{bottom:76px;font-size:14px;max-width:90vw;text-align:center}
+ .lbl.nb{font-size:12px}.lbl.poi{font-size:11px}
+}
+@media (max-width:760px){#mkpanel:not(.closed)~#toast{bottom:calc(62vh + 12px)}}
+
+</style></head><body>
+<div id="app"></div><div id="labels"></div>
+<div id="top" class="glass"><h1>Aimorés 3D · lado do Hospital</h1><div class="sub">Triângulo · Sossego · Residencial Nilton Freire Sampaio · Centro (da igreja até o viaduto)</div>
+<div class="views"><button data-view="geral">Visão geral</button><button data-view="residencial">Residencial</button><button data-view="triangulo">Triângulo</button><button data-view="sossego">Sossego</button><button data-view="igreja">Igreja</button><button data-view="praca">Praça</button><button data-view="viaduto">Viaduto</button><button data-view="hospital">Hospital</button><button id="touchmode" class="mob">✋ 1 dedo: mover</button><button id="layersbtn" class="mob">⚙ Opções</button><button id="helpbtn">?</button></div></div>
+<div id="layers" class="glass"><label><input type="checkbox" id="t_cars" checked>Carros</label><label><input type="checkbox" id="t_train" checked>Trem</label><label><input type="checkbox" id="t_labels" checked>Nomes</label><label><input type="checkbox" id="t_limits">Limites dos bairros</label><label><input type="checkbox" id="t_trees" checked>Árvores</label><label><input type="checkbox" id="t_shadows" checked>Sombras</label>
+<label>☀ <input type="range" id="hour" min="6.5" max="17.8" step="0.1"><span id="hourlbl"></span></label><label>Qualidade <select id="quality"><option value="low">Leve</option><option value="medium">Média (celular)</option><option value="high">Alta</option><option value="ultra">Ultra</option></select></label></div>
+<div id="mkpanel" class="glass"><div id="mkhead"><span class="grab"></span><button id="mktoggle" title="Abrir/fechar">☰</button><b>📍 Marcadores</b><span id="mkstatus"></span></div><div id="mkbody"></div></div>
+<div id="toast" class="glass"></div>
+<div id="help" class="glass"><h3>Como usar</h3>
+<b>Mouse:</b> arraste com o botão esquerdo para mover o mapa, direito para girar/inclinar, rodinha para zoom. <b>Duplo clique</b> leva a câmera até o nível da rua.<br>
+<b>Celular:</b> 1 dedo arrasta o mapa (ou gira, se você trocar no botão “1 dedo”), 2 dedos fazem pinça para zoom e giram/inclinam. Toque em <i>📍 Marcadores</i> embaixo para abrir o painel; no modo <i>Colocar</i>, um toque no mapa coloca o pino. Em <i>⚙ Opções</i> dá para subir a qualidade.<br><br>
+<b>Marcadores:</b> no painel da direita crie uma categoria (cor + nome, ex.: verde = "ferreiro") e, se quiser, a quantidade máxima. Selecione a categoria, clique em <i>Colocar</i> e clique no mapa. Use <i>Mover</i> para arrastar. Clique num marcador para renomear, trocar de categoria, anotar ou apagar. Tudo fica salvo neste navegador; use <i>Exportar/Importar</i> para levar para outro aparelho.<br><br>
+<small>Dados: © OpenStreetMap (ODbL), Microsoft Global ML Building Footprints (ODbL), relevo SRTM/Terrarium (AWS Terrain Tiles). Textura do solo derivada de imagens de satélite Esri World Imagery (Esri, Maxar, Earthstar Geographics). Cores de fachada e alturas das casas são aproximadas.</small><br><br><button onclick="document.getElementById('help').classList.remove('show')">Fechar</button></div>
+<div id="loading"><div class="spin"></div><h2>Aimorés 3D</h2><div id="loadmsg">Carregando dados…</div></div>
+<script src="d1.js"></script><script src="d2.js"></script><script src="d3.js"></script><script src="d4.js"></script><script src="d5.js"></script><script src="d6.js"></script><script src="d7.js"></script><script src="data.js"></script><script src="app.js?v=3"></script>
+</body></html>
