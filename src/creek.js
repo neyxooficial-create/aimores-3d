@@ -43,6 +43,26 @@ export function buildCreek(city, T, day, Q) {
   if (!C) return null;
   const P = C.pts.map(([x, z, ws, w, mode]) => ({ x, z, ws, w, mode }));
   const n = P.length;
+  {
+    // small natural meanders on the open (natural) stretches only, fading out near culverts/canals
+    let s0 = 0;
+    const openness = P.map((p, i) => {
+      let d = 99;
+      for (let k = Math.max(0, i - 8); k < Math.min(n, i + 9); k++) if (P[k].mode !== 0) d = Math.min(d, Math.abs(k - i));
+      return Math.min(1, d / 8);
+    });
+    const off = [];
+    for (let i = 0; i < n; i++) {
+      if (i) s0 += Math.hypot(P[i].x - P[i - 1].x, P[i].z - P[i - 1].z);
+      off.push((Math.sin(s0 / 11.0) * 0.9 + Math.sin(s0 / 4.3 + 1.7) * 0.35) * openness[i] * Math.min(1.2, P[i].w * 0.5));
+    }
+    for (let i = 1; i < n - 1; i++) {
+      const a = P[i - 1], b = P[i + 1];
+      let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz) || 1;
+      P[i].mx = P[i].x - tz / L * off[i]; P[i].mz = P[i].z + tx / L * off[i];
+    }
+    for (let i = 1; i < n - 1; i++) { P[i].x = P[i].mx; P[i].z = P[i].mz; }
+  }
   // tangents / normals and downstream distance
   let s = 0;
   for (let i = 0; i < n; i++) {
@@ -68,7 +88,7 @@ export function buildCreek(city, T, day, Q) {
   const dark = new GeoBuilder(false, false);
   const stones = [], grass = [], riparian = [];
   const R = rng(1234);
-  const mud = srgb(150, 132, 104), soil = srgb(178, 160, 124), grassC = srgb(160, 164, 110), bedC = srgb(190, 178, 152);
+  const mud = srgb(138, 118, 88), soil = srgb(160, 142, 106), grassC = srgb(134, 146, 84), bedC = srgb(128, 116, 92);
   const concC = [1, 1, 1];
 
   const side = (p, off, y) => [p.x + p.nx * off, y, p.z + p.nz * off];
@@ -95,18 +115,21 @@ export function buildCreek(city, T, day, Q) {
         [a.x / 2, a.z / 2], [b.x / 2, b.z / 2], [b.x / 2 + 0.3, b.z / 2], [a.x / 2 + 0.3, a.z / 2], bedC);
       // banks: water edge -> 1.2 m -> top, draped on the carved terrain
       for (const sg of [-1, 1]) {
-        const offs = [0, 0.7, 1.6, 2.6];
+        const jitter = (p, k) => k ? 0.35 * Math.sin(p.s * 0.9 + sg * 2 + k) : 0;
+        const offs = [0, 0.5, 1.3, 2.4];
         const ring = (p, hw) => offs.map((o, k) => {
-          const d = sg * (hw + 0.15 + o);
+          const d = sg * (hw + 0.1 + o + jitter(p, k));
           const x = p.x + p.nx * d, z = p.z + p.nz * d;
-          const y = k === 0 ? p.ws - 0.05 : Math.max(T.at(x, z) + 0.04, p.ws + 0.05 * k);
+          const t = T.at(x, z);
+          const y = k === 0 ? p.ws - 0.06 : k === offs.length - 1 ? t + 0.03 : Math.max(t + 0.05, p.ws + 0.08 * k);
           return [x, y, z];
         });
         const ra = ring(a, hwA), rb = ring(b, hwB);
-        const cols = [mud, soil, grassC, grassC];
+        const cols = [mud, soil, grassC, null];
         for (let k = 0; k < offs.length - 1; k++) {
           const q = [ra[k], rb[k], rb[k + 1], ra[k + 1]];
-          const cq = [cols[k], cols[k], cols[k + 1], cols[k + 1]];
+          const outer = grassC.map(v => v * 1.0);
+          const cq = [cols[k] || outer, cols[k] || outer, cols[k + 1] || outer, cols[k + 1] || outer];
           quadUp(bank, q[0], q[1], q[2], q[3], [q[0][0] / 2, q[0][2] / 2], [q[1][0] / 2, q[1][2] / 2], [q[2][0] / 2, q[2][2] / 2], [q[3][0] / 2, q[3][2] / 2], null, cq);
         }
       }
@@ -115,14 +138,14 @@ export function buildCreek(city, T, day, Q) {
         const o = (R() - 0.5) * a.w * 1.1;
         stones.push([a.x + a.nx * o, a.ws - 0.15 + R() * 0.12, a.z + a.nz * o, 0.12 + R() * 0.28 + a.slope * 2, R()]);
       }
-      for (let k = 0; k < 2; k++) {
-        const sg = R() < 0.5 ? -1 : 1, o = sg * (hwA + 0.5 + R() * 2.2);
+      for (let k = 0; k < 4; k++) {
+        const sg = R() < 0.5 ? -1 : 1, o = sg * (hwA + 0.3 + R() * 2.6);
         const x = a.x + a.nx * o, z = a.z + a.nz * o;
         grass.push([x, T.at(x, z), z, 0.5 + R() * 0.7, R()]);
       }
-      if (i % 9 === 0 && R() < 0.55) {
-        const sg = R() < 0.5 ? -1 : 1, o = sg * (hwA + 3.5 + R() * 4);
-        riparian.push([a.x + a.nx * o, a.z + a.nz * o]);
+      if (i % 4 === 0 && R() < 0.7) {
+        const sg = R() < 0.5 ? -1 : 1, o = sg * (hwA + 3.2 + R() * 5);
+        riparian.push([a.x + a.nx * o, a.z + a.nz * o, R() < 0.35 ? 10 : R() < 0.5 ? 1 : 8]);
       }
     } else if (m === 1) {
       // concrete canal: floor + two walls + coping
@@ -173,7 +196,7 @@ export function buildCreek(city, T, day, Q) {
     }
   }
 
-  const wmat = makeWaterMaterial(day, { flow: true, deep: 0x2c4536, shallow: 0x6d7a5a, flowSpeed: 0.45 });
+  const wmat = makeWaterMaterial(day, { flow: true, deep: 0x23352a, shallow: 0x4e5a3e, flowSpeed: 0.45 });
   const wg = water.geometry();
   wg.setAttribute('shore', wg.getAttribute('extra'));
   const wm = new THREE.Mesh(wg, wmat);

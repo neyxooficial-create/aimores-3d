@@ -86,7 +86,7 @@ void main() {
   depth = m * 5.0;
 #endif
 #ifdef FLOW
-  depth = 0.25 + 0.6 * (1.0 - abs(vUv.x * 2.0 - 1.0));
+  depth = 0.6 + 2.2 * (1.0 - abs(vUv.x * 2.0 - 1.0));
 #endif
   float df = smoothstep(0.0, 3.5, depth);
   float day = 1.0 - uNight;
@@ -106,7 +106,7 @@ void main() {
   foam = max(foam, vShore * smoothstep(0.45, 0.75, foamN));
 #endif
   col = mix(col, vec3(0.86, 0.88, 0.86) * (0.15 + 0.85 * day), foam * 0.65);
-  float alpha = mix(0.55, 0.94, df);
+  float alpha = mix(0.62, 0.95, df);
   alpha = max(alpha, foam * 0.8);
 #ifdef MASK
   alpha *= smoothstep(0.04, 0.4, m);

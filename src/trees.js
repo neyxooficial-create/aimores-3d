@@ -112,8 +112,8 @@ function makeArchetypes(near, Q) {
     }
     return merge(gb, tg);
   };
-  A.round = broad(11, 4, 0.55, 0.95, 1.6, 0.11);     // comum, oiti, mata
-  A.wide = broad(23, 6, 0.75, 0.7, 1.2, 0.14);       // mangueira, flamboyant (umbrella)
+  A.round = broad(11, 4, 0.55, 0.95, 1.6, 0.16);     // comum, oiti, mata
+  A.wide = broad(23, 6, 0.75, 0.7, 1.2, 0.2);        // mangueira, flamboyant (umbrella)
   A.bush = (() => { const gb = new GeoBuilder(true, true).enableExtra(); blobCrown(gb, 5, { blobs: near ? 3 : 1, spread: 0.6, flat: 0.8, detail: det }); return merge(gb); })();
   A.tall = (() => { // eucalyptus: pale tall trunk, narrow airy crown
     const gb = new GeoBuilder(true, true).enableExtra();

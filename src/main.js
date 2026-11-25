@@ -157,6 +157,10 @@ async function main() {
   L.buildLote(city, T, scene);
   L.buildFootbridges(city, T, scene, city.viaduct.railtop);
 
+  // mata ciliar along the creek
+  if (creek && creek.userData.riparian) {
+    for (const [x, z, sp] of creek.userData.riparian) city.trees.push([x, z, sp === 10 ? 3 : 5 + Math.random() * 2, Math.floor(x * 7 + z * 13), sp]);
+  }
   await say('Árvores…');
   const trees = buildTrees(city, T, day, Q, praca ? praca.palms : []);
   scene.add(trees);
