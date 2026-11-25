@@ -10,7 +10,7 @@ import { legacy as L } from './legacy/legacy.js';
 import { nextFrame } from './util.js';
 import { placeLamps, buildLamps, patchTreeNight, patchNightLight } from './lamps.js';
 import { buildTrees } from './trees.js';
-import { buildRoads } from './roads.js';
+import { buildRoads, asphaltTexture } from './roads.js';
 import { Traffic } from './traffic.js';
 
 const params = new URLSearchParams(location.search);
@@ -23,6 +23,23 @@ if (!['low', 'medium', 'high', 'ultra'].includes(Q)) Q = defaultQ;
 
 const $ = id => document.getElementById(id);
 async function say(msg) { $('loadmsg').textContent = msg; await nextFrame(); }
+
+/** Re-wind every downward-facing triangle of a (mostly horizontal) surface so it faces up. */
+function faceUp(g) {
+  const P = g.attributes.position, names = Object.keys(g.attributes);
+  const swap = (i, j) => { for (const n of names) { const a = g.attributes[n]; for (let k = 0; k < a.itemSize; k++) { const t = a.array[i * a.itemSize + k]; a.array[i * a.itemSize + k] = a.array[j * a.itemSize + k]; a.array[j * a.itemSize + k] = t; } } };
+  const idx = g.index;
+  const nT = idx ? idx.count / 3 : P.count / 3;
+  for (let t = 0; t < nT; t++) {
+    const a = idx ? idx.getX(t * 3) : t * 3, b = idx ? idx.getX(t * 3 + 1) : t * 3 + 1, c = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+    const ny = (P.getZ(b) - P.getZ(a)) * (P.getX(c) - P.getX(a)) - (P.getX(b) - P.getX(a)) * (P.getZ(c) - P.getZ(a));
+    if (ny >= 0) continue;
+    if (idx) { idx.setX(t * 3 + 1, c); idx.setX(t * 3 + 2, b); } else swap(b, c);
+  }
+  if (g.attributes.normal) { for (let i = 0; i < g.attributes.normal.count; i++) { const n = g.attributes.normal; if (n.getY(i) < 0) n.setXYZ(i, -n.getX(i), -n.getY(i), -n.getZ(i)); } }
+  for (const n of names) g.attributes[n].needsUpdate = true;
+  if (idx) idx.needsUpdate = true;
+}
 
 /** The old road builder expects one Float32 buffer + {name: [byteOffset, count]}. */
 function legacyMeshTable(meshes) {
@@ -157,7 +174,35 @@ async function main() {
   scene.add(traffic.group);
 
   await say('Postes e iluminação pública…');
-  const lampList = placeLamps(city, T, { skipIds: viadIds });
+  // the old viaduct builders used a very dark asphalt: give them the new one
+  {
+    const nu = asphaltTexture();
+    const dark = tex => {
+      const img = tex && tex.image;
+      if (!img) return false;
+      let d = img.data;
+      if (!d && img.getContext) d = img.getContext('2d').getImageData(0, 0, img.width, img.height).data;
+      if (!d || d.length < 16) return false;
+      let s = 0, n = 0;
+      for (let i = 0; i < d.length; i += 4 * 97) { s += d[i]; n++; }
+      return s / n < 95;
+    };
+    for (const g of [viaduct.group, viaduct2 && viaduct2.group]) {
+      if (!g) continue;
+      g.traverse(o => {
+        if (!o.isMesh || !o.material || !o.material.map) return;
+        const im = o.material.map.image;
+        const legacyRoad = im && !im.data && im.width === 512 && o.material.map !== nu.map; // old road canvas
+        if (!legacyRoad && !dark(o.material.map)) return;
+        o.material.map = nu.map; o.material.normalMap = nu.normalMap; o.material.color.setScalar(1); o.material.needsUpdate = true;
+        // deck triangles were wound facing down (double-sided material then lit them from below)
+        faceUp(o.geometry);
+      });
+    }
+  }
+  const elevatedIds = new Set([...viadIds, 1314627853, 1314627854, 1314627855]);
+  const elevated = city.roads.filter(r => elevatedIds.has(r.id)).map(road => ({ road, heightAt: (rd, x, z) => roadH(rd, x, z) }));
+  const lampList = placeLamps(city, T, { skipIds: elevatedIds, elevated });
   // the praça has its own decorative posts: add their light (no new poles)
   const plazaLights = [];
   {

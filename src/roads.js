@@ -91,7 +91,7 @@ export function settTexture(S = 1024) {
 }
 
 /** Asphalt: dark aggregate, light patches, fine cracks. Texture covers 4 m. */
-function asphaltTexture(S = 512) {
+export function asphaltTexture(S = 512) {
   if (TEX.asphalt) return TEX.asphalt;
   const n1 = valueNoise(128, 31), n2 = valueNoise(16, 33), n3 = valueNoise(64, 35);
   const rgb = new Uint8ClampedArray(S * S * 4), hgt = new Float32Array(S * S);
@@ -100,11 +100,11 @@ function asphaltTexture(S = 512) {
     const agg = sp > 0.86 ? 1.35 : sp < 0.1 ? 0.7 : 1;
     const patch = fbm(n2, x / 32, y / 32, 3);
     const crack = Math.abs(fbm(n3, x / 20, y / 20, 3) - 0.5) < 0.008 ? 0.75 : 1;
-    let v = (92 + 22 * n1(x, y)) * agg * (0.9 + 0.22 * patch) * crack;
+    let v = (124 + 26 * n1(x, y)) * agg * (0.9 + 0.2 * patch) * crack;
     rgb[i * 4] = v; rgb[i * 4 + 1] = v * 0.99; rgb[i * 4 + 2] = v * 0.97; rgb[i * 4 + 3] = 255;
-    hgt[i] = 0.5 * n1(x, y) + (agg - 1) * 0.6 - (crack < 1 ? 0.6 : 0);
+    hgt[i] = 0.35 * n1(x / 2, y / 2) + (agg - 1) * 0.25 - (crack < 1 ? 0.4 : 0);
   }
-  TEX.asphalt = finish(S, S, rgb, hgt, 1.6);
+  TEX.asphalt = finish(S, S, rgb, hgt, 0.7);
   return TEX.asphalt;
 }
 
@@ -145,7 +145,7 @@ function sidewalkTexture(S = 512) {
 }
 
 const SPEC = {
-  asphalt: { scale: 4, lift: 0.09, offset: -3, rough: 0.86, nscale: 0.7, tex: asphaltTexture },
+  asphalt: { scale: 4, lift: 0.09, offset: -3, rough: 0.82, nscale: 0.5, tex: asphaltTexture },
   paver: { scale: 2, lift: 0.1, offset: -3, rough: 0.8, nscale: 1.4, tex: settTexture },
   dirt: { scale: 6, lift: 0.05, offset: -2, rough: 1, nscale: 0.9, tex: dirtTexture },
   sidewalk: { scale: 2, lift: 0.22, offset: -4, rough: 0.9, nscale: 0.6, tex: sidewalkTexture },

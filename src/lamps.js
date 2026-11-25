@@ -84,6 +84,7 @@ export function patchTreeNight(root, strength = 1) {
 /** Choose lamp positions along the street network. */
 export function placeLamps(city, T, opts = {}) {
   const skip = opts.skipIds || new Set();
+  const elevated = opts.elevated || [];
   const bGrid = new SpatialGrid(30);
   for (const b of city.buildings) {
     let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
@@ -152,6 +153,28 @@ export function placeLamps(city, T, opts = {}) {
         s += spacing;
       }
       carry = s - L;
+    }
+  }
+  // lamps on bridges / viaduct decks: heights from the caller's road profile
+  for (const { road, heightAt, spacing = 28 } of elevated) {
+    let s = 6, side = 1, acc = 0;
+    for (let i = 0; i < road.p.length - 1; i++) {
+      const [ax, az] = road.p[i], [bx, bz] = road.p[i + 1];
+      const L = Math.hypot(bx - ax, bz - az);
+      if (L < 0.3) continue;
+      const ux = (bx - ax) / L, uz = (bz - az) / L, nx = -uz, nz = ux;
+      while (s - acc < L) {
+        const t = s - acc, off = (road.w || 8) / 2 + 0.25;
+        const x0 = ax + ux * t, z0 = az + uz * t;
+        const x = x0 + nx * off * side, z = z0 + nz * off * side;
+        const y = heightAt(road, x0, z0);
+        if (y !== null && !tooClose(x, z, 14)) {
+          const lamp = { x, z, y: y + 0.6, ax: -nx * side, az: -nz * side, led: true, h: 9, th: -3.2 + R() * 3.4, i: lamps.length };
+          lamps.push(lamp); near.add(lamp, x, z);
+        }
+        side = -side; s += spacing;
+      }
+      acc += L;
     }
   }
   return lamps;
