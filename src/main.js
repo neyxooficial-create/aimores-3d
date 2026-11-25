@@ -9,6 +9,9 @@ import { buildCreek, creekDetailMask } from './creek.js';
 import { legacy as L } from './legacy/legacy.js';
 import { nextFrame } from './util.js';
 import { placeLamps, buildLamps, patchTreeNight, patchNightLight } from './lamps.js';
+import { buildTrees } from './trees.js';
+import { buildRoads } from './roads.js';
+import { Traffic } from './traffic.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.has('shot');
@@ -73,8 +76,6 @@ async function main() {
   if (creek) scene.add(creek);
 
   await say('Ruas, calçadas e meio-fio…');
-  const lm = legacyMeshTable(data.meshes);
-  city.meshes = lm.table;
   const viadEx = L.viaductCentroExclusion(city);
   const viadIds = L.viaductCentroIds(city);
   const viadH = L.viaductCentroHeight(city);
@@ -85,7 +86,8 @@ async function main() {
     const keep = w => !ex7((w[0] + w[2]) / 2, (w[1] + w[3]) / 2) && !ex7(w[0], w[1]) && !ex7(w[2], w[3]);
     city.walls = city.walls.filter(keep); city.gates = city.gates.filter(keep);
   }
-  const roads = L.buildRoads(city, T, lm.buffer, scene, { exclude: viadEx, skipIds: viadIds });
+  const roads = buildRoads(city, T, data.meshes, { exclude: viadEx, skipIds: viadIds, quality: Q });
+  scene.add(roads);
   if (viadEx) for (const r of city.roads) if (viadIds.has(r.id)) r.b = true;
 
   await say('Igreja, praça e campos…');
@@ -134,7 +136,8 @@ async function main() {
   L.buildFootbridges(city, T, scene, city.viaduct.railtop);
 
   await say('Árvores…');
-  const trees = L.buildTrees(city, T, scene, Q, praca ? praca.palms : []);
+  const trees = buildTrees(city, T, day, Q, praca ? praca.palms : []);
+  scene.add(trees);
 
   await say('Trânsito…');
   const vd = city.viaduct;
@@ -150,7 +153,8 @@ async function main() {
     if (road.id === 1314627855 || road.id === 1314627854) { const h = rampH(x, z); if (h !== null) return h + 0.2; }
     return T.at(x, z) + 0.1;
   };
-  const traffic = new L.Traffic(city, T, scene, roadH, { low: 35, medium: 90, high: 170, ultra: 220 }[Q], { low: 0, medium: 0.04 }[Q] || 0.11, Q);
+  const traffic = new Traffic(city, T, roadH, day, Q);
+  scene.add(traffic.group);
 
   await say('Postes e iluminação pública…');
   const lampList = placeLamps(city, T, { skipIds: viadIds });
@@ -277,7 +281,7 @@ async function main() {
   // ---------------------------------------------------------------------------- UI
   document.querySelectorAll('[data-view]').forEach(b => { b.onclick = () => goView(b.dataset.view); });
   const toggle = (id, fn) => { const el = $(id); el.onchange = () => { fn(el.checked); wake(); }; fn(el.checked); };
-  toggle('t_cars', v => { traffic.mesh.visible = v; if (traffic.parked) traffic.parked.visible = v; });
+  toggle('t_cars', v => { traffic.group.visible = v; });
   toggle('t_train', v => { train.group.userData.off = !v; });
   toggle('t_labels', v => { labels.setGroupVisible('lbl nb', v); labels.setGroupVisible('lbl poi', v); });
   toggle('t_limits', v => { limits.visible = v; });
@@ -351,7 +355,8 @@ async function main() {
       if (clockSpeed > 1) shadowDirty = true;
     }
     day.update(dt, camera, controls.target);
-    if (traffic.mesh.visible) traffic.tick(dt);
+    if (trees.visible) trees.userData.update(camera, controls.target);
+    if (traffic.group.visible) traffic.tick(dt);
     if (train.group.userData.off) train.group.visible = false; else train.tick(dt);
     // shadows: refresh lazily on weaker settings
     if (!renderer.shadowMap.autoUpdate) {
