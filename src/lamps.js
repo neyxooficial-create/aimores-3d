@@ -229,7 +229,7 @@ export function buildLamps(lamps, T, day, Q, extra = []) {
 
   // pole (+ curved arm) geometry in local space: pole on +y, arm toward +x
   const pole = new GeoBuilder(false, false);
-  const seg = 6;
+  const seg = Q === 'low' ? 4 : 6;
   const ring = (y, r) => Array.from({ length: seg }, (_, k) => [Math.cos(k / seg * Math.PI * 2) * r, y, Math.sin(k / seg * Math.PI * 2) * r]);
   const tube = (r0, r1) => {
     for (let k = 0; k < seg; k++) {
@@ -243,7 +243,8 @@ export function buildLamps(lamps, T, day, Q, extra = []) {
   // arm: unit-height pole is scaled to lamp height, arm added separately to keep proportions
   const arm = new GeoBuilder(false, false);
   const pts = [];
-  for (let k = 0; k <= 6; k++) { const t = k / 6; pts.push([1.6 * t, 0.45 * Math.sin(t * Math.PI / 2), 0]); }
+  const aseg = Q === 'low' ? 2 : 4;
+  for (let k = 0; k <= aseg; k++) { const t = k / aseg; pts.push([1.6 * t, 0.45 * Math.sin(t * Math.PI / 2), 0]); }
   for (let k = 0; k < pts.length - 1; k++) {
     const a = pts[k], b = pts[k + 1], r = 0.05;
     arm.quad([a[0], a[1] - r, -r], [b[0], b[1] - r, -r], [b[0], b[1] + r, -r], [a[0], a[1] + r, -r]);

@@ -215,7 +215,7 @@ export class DayCycle {
     this.hemi.groundColor.setRGB(0.42, 0.36, 0.26).multiplyScalar(0.25 + 0.75 * day);
     this.hemi.intensity = lerp(0.25, 1.1, day);
     this.scene.fog.color.copy(hor);
-    this.renderer.toneMappingExposure = lerp(1.1, 0.68, day);
+    this.renderer.toneMappingExposure = lerp(1.1, 0.82, day);
     if (this.useEnv && Math.abs(this.hours - this.envHours) > 0.15 && Math.abs(this.hours - this.envHours) < 23.85) this._updateEnv();
     for (const f of this.listeners) f(this);
   }

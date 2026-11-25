@@ -70,7 +70,7 @@ void main() {
   vec3 b = texture2D(nTex, p / 7.0 + vec2(-time * 0.018, time * 0.013)).xyz * 2.0 - 1.0;
   vec3 c = texture2D(nTex, p / 61.0 + vec2(time * 0.004, -time * 0.003)).xyz * 2.0 - 1.0;
   float fade = 1.0 - smoothstep(150.0, 2500.0, dist);
-  n = normalize(vec3((a.xy * 0.6 + b.xy * 0.35 * fade + c.xy * 0.5), 1.0));
+  n = normalize(vec3((a.xy * 0.6 + b.xy * 0.35 * fade + c.xy * 0.5) * 0.38, 1.0));
   n = normalize(vec3(n.x, n.z, n.y));
 #endif
   // water depth -> colour / opacity / foam
@@ -94,8 +94,8 @@ void main() {
   // sun-lit scattering
   body *= 0.55 + 0.45 * max(dot(vec3(0.0, 1.0, 0.0), uSunDir), 0.0) * day;
   vec3 R = reflect(-V, n);
-  float fres = 0.025 + 0.975 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-  vec3 refl = skyAt(R);
+  float fres = 0.02 + 0.7 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+  vec3 refl = mix(skyAt(R), (uZenith + uHorizon) * 0.5, 0.3);
   float sp = pow(max(dot(R, uSunDir), 0.0), 420.0) * 7.0 + pow(max(dot(R, uSunDir), 0.0), 40.0) * 0.18;
   refl += uSunCol * sp * smoothstep(-0.02, 0.06, uSunDir.y);
   vec3 col = mix(body, refl, fres);
@@ -181,7 +181,7 @@ export function buildRiver(meshes, T, day) {
   const mat = makeWaterMaterial(day, {
     level: T.WL, depthTex,
     depthBox: new THREE.Vector4(T.XMIN, T.ZMIN, 1 / (T.XMAX - T.XMIN), 1 / (T.ZMAX - T.ZMIN)),
-    deep: 0x203f37, shallow: 0x587358,
+    deep: 0x2a3f30, shallow: 0x5d6a4a,
   });
   const mesh = new THREE.Mesh(g, mat);
   mesh.name = 'rio';
@@ -207,7 +207,7 @@ export function buildLakes(water, maskBytes, T, day) {
     // keep the plane outside the detailed map (the river inside uses its own mesh)
     const geo = new THREE.PlaneGeometry(x1 - x0, z1 - z0, 1, 1).rotateX(-Math.PI / 2);
     geo.setAttribute('shore', new THREE.BufferAttribute(new Float32Array(4), 1));
-    const mat = makeWaterMaterial(day, { maskTex: tex, maskR: water.R, deep: 0x1b3833, shallow: 0x3f5f4c });
+    const mat = makeWaterMaterial(day, { maskTex: tex, maskR: water.R, deep: 0x1f3a35, shallow: 0x46604c });
     const m = new THREE.Mesh(geo, mat);
     m.position.set((x0 + x1) / 2, b.level, (z0 + z1) / 2);
     m.renderOrder = 2;

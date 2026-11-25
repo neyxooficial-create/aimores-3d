@@ -12,6 +12,7 @@ import { placeLamps, buildLamps, patchTreeNight, patchNightLight } from './lamps
 import { buildTrees } from './trees.js';
 import { buildRoads, asphaltTexture } from './roads.js';
 import { Traffic } from './traffic.js';
+import { buildRailLite } from './rail.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.has('shot');
@@ -140,10 +141,14 @@ async function main() {
     const ok = w => !nearRail((w[0] + w[2]) / 2, (w[1] + w[3]) / 2) && !nearRail(w[0], w[1]) && !nearRail(w[2], w[3]);
     city.walls = city.walls.filter(ok); city.gates = city.gates.filter(ok);
   }
+  if (Q === 'low') city.gates = []; // gates + pillars are many small pieces: skip on phones
   L.buildWalls(city, T, scene);
 
   await say('Ferrovia Vitória-Minas, viadutos e passarelas…');
-  const rail = L.buildRail(city, T, scene);
+  const rail = L.buildRail(city, T, scene); // still used for the track paths (train, viaducts)
+  if (rail.group) scene.remove(rail.group);
+  const railway = buildRailLite(city, T);
+  scene.add(railway);
   const train = L.Train(rail.paths, scene);
   const viaduct = L.buildViaductVale(city, T, scene, rail.paths);
   const viaduct2 = L.buildViaductCentro(city, T, scene, rail.paths);
@@ -270,7 +275,8 @@ async function main() {
 
   const nbLabel = n => (city.neigh[n] ? city.neigh[n].label : [0, 0]);
   const poi = n => { const p = city.extras.poi.find(q => q[0].startsWith(n)); return p ? [p[1], 0, p[2]] : [0, 0, 0]; };
-  const creekPt = (() => { if (!city.creek) return [-560, 0, -200]; const cp = city.creek.pts; const p = cp.find(q => q[1] < -150 && q[4] === 0) || cp[cp.length >> 1]; return [p[0], 0, p[1]]; })();
+  // most scenic stretch: the natural channel through the Triângulo woods
+  const creekPt = (() => { if (!city.creek) return [-560, 0, -200]; const cp = city.creek.pts; const p = cp.find(q => q[1] < 140 && q[1] > 60 && q[4] === 0) || cp[cp.length >> 1]; return [p[0], 0, p[1]]; })();
   const views = {
     geral: { t: [-120, 0, 120], d: 2300, pol: 0.95, az: -0.35 },
     residencial: { t: [nbLabel('Nilton Freire Sampaio')[0], 0, nbLabel('Nilton Freire Sampaio')[1]], d: 380, pol: 0.85, az: -0.3 },
@@ -284,7 +290,7 @@ async function main() {
       az: (() => { const [a, b] = vd.deck, dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), nx = -dz / l, nz = dx / l; return Math.atan2(nx * 0.85 + dx / l * 0.5, nz * 0.85 + dz / l * 0.5); })(),
     },
     viadutocentro: { t: viaduct2 && viaduct2.center ? [viaduct2.center[0], 0, viaduct2.center[2]] : [-930, 0, -70], d: 150, pol: 1.1, az: -0.9 },
-    corrego: { t: creekPt, d: 70, pol: 1.05, az: 0.8 },
+    corrego: { t: creekPt, d: 45, pol: 1.15, az: 2.4 },
     rio: { t: [-120, 0, -860], d: 520, pol: 1.15, az: 2.6 },
   };
   let anim = null;

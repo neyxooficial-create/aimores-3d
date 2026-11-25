@@ -52,7 +52,7 @@ function frondTexture() {
 function blobCrown(gb, seed, opts) {
   const R = rng(seed);
   const { blobs, spread, flat = 1, detail } = opts;
-  const base = new THREE.IcosahedronGeometry(1, detail);
+  const base = detail < 0 ? new THREE.OctahedronGeometry(1, 0) : new THREE.IcosahedronGeometry(1, detail);
   const pos = base.attributes.position;
   const centres = [[0, 0, 0]];
   for (let i = 1; i < blobs; i++) {
@@ -95,14 +95,14 @@ function trunk(gb, h, r0, r1, sides, color, lean = [0, 0], y0 = -0.3) {
 function makeArchetypes(near, Q) {
   const bark = srgb(98, 80, 62), barkLight = srgb(190, 182, 168), palmBark = srgb(150, 136, 112);
   const A = {};
-  const det = near ? 1 : 0;
+  const det = near ? 1 : Q === 'low' ? -1 : 0;
   const sides = near ? 6 : 3;
   // broadleaf: crown centred at y=0 (radius 1); trunk from -h to crown base
   // trunks are long (6 crown radii) and simply continue below ground: every tree height fits
   const broad = (seed, blobs, spread, flat, trunkH, r0) => {
     trunkH = 6;
     const gb = new GeoBuilder(true, true).enableExtra();
-    blobCrown(gb, seed, { blobs: near ? blobs : 1, spread, flat, detail: det });
+    blobCrown(gb, seed, { blobs: near ? (Q === 'low' ? Math.min(blobs, 2) : blobs) : 1, spread, flat, detail: det });
     // trunk + two limbs reaching into the crown
     const tg = new GeoBuilder(true, true).enableExtra();
     trunk(tg, 0.15, r0, r0 * 0.7, sides, bark, [0, 0], -trunkH);
