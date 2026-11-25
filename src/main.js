@@ -338,7 +338,8 @@ async function main() {
   const toggle = (id, fn) => { const el = $(id); el.onchange = () => { fn(el.checked); wake(); }; fn(el.checked); };
   toggle('t_cars', v => { traffic.group.visible = v; });
   toggle('t_train', v => { train.group.userData.off = !v; });
-  toggle('t_labels', v => { labels.setGroupVisible('lbl nb', v); labels.setGroupVisible('lbl poi', v); });
+  let labelsOn = true, labelsLow = false;
+  toggle('t_labels', v => { labelsOn = v; labels.setGroupVisible('lbl nb', v && !labelsLow); labels.setGroupVisible('lbl poi', v); });
   toggle('t_limits', v => { limits.visible = v; });
   toggle('t_trees', v => { trees.visible = v; });
   toggle('t_shadows', v => { day.sun.castShadow = v && Q !== 'low'; });
@@ -424,6 +425,9 @@ async function main() {
     }
     markers.tickScale(camera);
     renderer.render(scene, camera);
+    // neighbourhood names only from above (they clutter the view at street level)
+    const lowCam = camera.position.distanceTo(controls.target) < 140 && camera.position.y - gy < 60;
+    if (lowCam !== labelsLow) { labelsLow = lowCam; if (labelsOn) labels.setGroupVisible('lbl nb', !lowCam); }
     labels.update(camera, innerWidth, innerHeight);
     // adaptive pixel ratio
     if (!SHOT) {
