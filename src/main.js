@@ -8,6 +8,7 @@ import { buildRiver, buildLakes } from './water.js';
 import { buildCreek, creekDetailMask } from './creek.js';
 import { legacy as L } from './legacy/legacy.js';
 import { nextFrame } from './util.js';
+import { placeLamps, buildLamps, patchTreeNight, patchNightLight } from './lamps.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.has('shot');
@@ -151,6 +152,34 @@ async function main() {
   };
   const traffic = new L.Traffic(city, T, scene, roadH, { low: 35, medium: 90, high: 170, ultra: 220 }[Q], { low: 0, medium: 0.04 }[Q] || 0.11, Q);
 
+  await say('Postes e iluminação pública…');
+  const lampList = placeLamps(city, T, { skipIds: viadIds });
+  // the praça has its own decorative posts: add their light (no new poles)
+  const plazaLights = [];
+  {
+    const poly = city.extras.park || [];
+    if (poly.length) {
+      let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
+      for (const [x, z] of poly) { x0 = Math.min(x0, x); z0 = Math.min(z0, z); x1 = Math.max(x1, x); z1 = Math.max(z1, z); }
+      const inside = (x, z) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { if ((poly[i][1] > z) !== (poly[j][1] > z) && x < (poly[j][0] - poly[i][0]) * (z - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) c = !c; } return c; };
+      for (let x = x0 + 6; x < x1; x += 13) for (let z = z0 + 6; z < z1; z += 13) if (inside(x, z)) plazaLights.push({ x, z, ax: 0, az: 0, led: true });
+    }
+  }
+  // floodlights on the church façade
+  if (church && church.center) {
+    const [cx, cz] = church.center, f = church.front || [0, 1];
+    for (const k of [-1, 0, 1]) plazaLights.push({ x: cx + f[0] * 16 + f[1] * k * 6, z: cz + f[1] * 16 - f[0] * k * 6, ax: 0, az: 0, led: false });
+    plazaLights.push({ x: cx, z: cz, ax: 0, az: 0, led: false });
+  }
+  const lamps = buildLamps(lampList, T, day, Q, plazaLights);
+  scene.add(lamps);
+  buildings.traverse(o => {
+    if (!o.isMesh) return;
+    const m = o.material;
+    if (m.customProgramCacheKey && m.customProgramCacheKey() === 'paintmask') patchNightLight(m, 1, true);
+  });
+  for (const o of scene.children) if (o !== backdrop && o !== day.dome && o !== lakes && o !== river) patchTreeNight(o);
+
   // ---------------------------------------------------------------------------- labels & views
   const labels = new L.Labels($('labels'));
   labels.scale = SHOT ? 4 : { low: 0.75, medium: 1, high: 1.5, ultra: 2 }[Q];
@@ -254,6 +283,7 @@ async function main() {
   toggle('t_limits', v => { limits.visible = v; });
   toggle('t_trees', v => { trees.visible = v; });
   toggle('t_shadows', v => { day.sun.castShadow = v && Q !== 'low'; });
+  toggle('t_lamps', v => { lamps.visible = v; });
 
   // clock
   const hourEl = $('hour'), hourLbl = $('hourlbl'), playBtn = $('tplay'), speedEl = $('tspeed');
