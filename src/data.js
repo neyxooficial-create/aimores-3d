@@ -95,18 +95,15 @@ function parseGeo(bytes, meta) {
 
 async function loadTexture(url, onBytes) {
   const bytes = await fetchBytes(url, onBytes);
-  const blob = new Blob([bytes], { type: 'image/webp' });
-  let img;
-  if (typeof createImageBitmap === 'function') {
-    img = await createImageBitmap(blob, { imageOrientation: 'flipY' });
-    const t = new THREE.Texture(img);
-    t.flipY = false; // already flipped by createImageBitmap
-    t.needsUpdate = true;
-    return t;
-  }
-  img = new Image();
-  img.src = URL.createObjectURL(blob);
-  await img.decode();
+  // <img> decoding works everywhere (Safari included); WebGL does the vertical flip itself
+  const img = new Image();
+  const src = URL.createObjectURL(new Blob([bytes], { type: 'image/webp' }));
+  img.src = src;
+  await new Promise((ok, bad) => {
+    if (img.complete && img.naturalWidth) return ok();
+    img.onload = ok;
+    img.onerror = () => bad(new Error('imagem não carregou: ' + url));
+  });
   const t = new THREE.Texture(img);
   t.needsUpdate = true;
   return t;
@@ -131,7 +128,9 @@ export async function loadAll(quality, progress) {
     loadTexture(BASE + files[3][0] + v, onBytes),
   ]);
   const city = JSON.parse(new TextDecoder().decode(cityBytes));
-  const geo = parseGeo(gunzipSync(geoBytes), city.meta);
+  // some servers/CDNs already undo the gzip (Content-Encoding): only gunzip real gzip bytes
+  const raw = geoBytes[0] === 0x1f && geoBytes[1] === 0x8b ? gunzipSync(geoBytes) : geoBytes;
+  const geo = parseGeo(raw, city.meta);
   const terrain = new Terrain(city.meta, geo.height);
   return { city, terrain, back: geo.back, meshes: geo.meshes, waterMask: geo.watermask, groundTex: ground, backTex: back };
 }
