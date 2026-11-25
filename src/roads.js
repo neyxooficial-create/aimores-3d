@@ -43,8 +43,8 @@ export function settTexture(S = 1024) {
     const tones = xs.map(() => {
       const t = R();
       // grey granite with some warmer / darker stones
-      const base = t < 0.12 ? [150, 128, 112] : t < 0.25 ? [112, 110, 108] : t < 0.35 ? [176, 168, 156] : [140, 138, 134];
-      const k = 0.88 + R() * 0.24;
+      const base = t < 0.1 ? [146, 134, 122] : t < 0.24 ? [118, 116, 113] : t < 0.36 ? [164, 160, 152] : [140, 138, 134];
+      const k = 0.9 + R() * 0.18;
       return [base[0] * k, base[1] * k, base[2] * k, R(), R() * 0.8 - 0.4];
     });
     rowSets.push({ xs, tones, off: (R() - 0.5) * joint * 1.5 });
@@ -62,7 +62,10 @@ export function settTexture(S = 1024) {
       while (k < xs.length - 2 && xs[k + 1] <= xm) k++;
       const x0 = xs[k], x1 = xs[k + 1];
       const dx = Math.min(xm - x0, x1 - xm), dy = Math.min(fy, rowH - fy);
-      const e = Math.min(dx, dy) - joint / 2 + (rs.tones[k][4] * 2);
+      // hand-laid stones: wobbly joints and slightly rounded corners
+      const wob = (n1(x / 34 + r * 7.3, y / 34) - 0.5) * joint * 0.9;
+      const corner = Math.max(0, S * 0.012 - Math.hypot(Math.max(0, S * 0.012 - dx), Math.max(0, S * 0.012 - dy)));
+      const e = Math.min(dx, dy) - joint / 2 + (rs.tones[k][4] * 2) + wob - (S * 0.012 - corner) * 0.35;
       const i = (y * S + x) * 4;
       const grain = n1(x * 0.5, y * 0.5), sp = hash(x * 13.1 + y * 7.7);
       if (e <= 0) {

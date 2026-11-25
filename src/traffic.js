@@ -109,6 +109,8 @@ function carGeo(kind) {
     // window band
     for (const s of [-1, 1]) v.box(-L + 0.6, L - 0.3, 1.55, 2.6, s * W - 0.02, s * W + 0.02, GLASS, 0, s > 0 ? 'l' : 'r');
     v.box(L, L + 0.02, 1.3, 2.75, -W + 0.1, W - 0.1, GLASS, 0, 'f');
+    for (const s of [-1, 1]) v.box(-L + 0.1, L - 0.1, 0.95, 1.25, s * W - 0.025, s * W + 0.025, srgb(250, 200, 40), 0, s > 0 ? 'l' : 'r'); // livery stripe
+    v.box(-2.0, 1.0, 3.1, 3.35, -0.8, 0.8, srgb(210, 210, 210));                                                                       // roof A/C
     v.box(L - 0.1, L + 0.03, 2.8, 3.0, -W + 0.2, W - 0.2, srgb(240, 160, 30), 2, 'f'); // destination sign
     v.lights(L + 0.01, -L - 0.01, 0.75, 0.95, W - 0.1, W - 0.4);
     for (const x of [L - 1.4, -L + 2.0]) for (const z of [W - 0.1, -W + 0.1]) v.wheel(x, z, 0.5, 0.3, 10);
@@ -167,7 +169,8 @@ export class Traffic {
     this.mesh = this.group; // legacy name used by the UI toggle
     const R = this.R = rng(9001);
     // ------------------------------------------------------------ graph
-    const ok = r => !['footway', 'path', 'track', 'steps', 'cycleway', 'pedestrian'].includes(r.hw) && r.p.length > 1 && !(r.s === 'dirt' && r.hw === 'service');
+    const ok = r => !['footway', 'path', 'track', 'steps', 'cycleway', 'pedestrian'].includes(r.hw) && r.p.length > 1 && !(r.s === 'dirt' && r.hw === 'service')
+      && r.p.every(([x, z]) => T.inside(x, z, 3));
     this.roads = city.roads.filter(ok).map(r => {
       const len = [];
       let tot = 0;
