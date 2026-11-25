@@ -1,0 +1,22 @@
+{
+  "name": "aimores-3d",
+  "version": "5.0.0",
+  "private": true,
+  "description": "Aimorés 3D – maquete interativa da cidade (lado do Hospital)",
+  "type": "module",
+  "scripts": {
+    "data": "node tools/build-data.mjs",
+    "build": "node tools/build-app.mjs",
+    "dev": "node tools/build-app.mjs --dev"
+  },
+  "dependencies": {
+    "fflate": "0.8.2",
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "acorn": "^8.14.0",
+    "esbuild": "0.24.0",
+    "js-beautify": "^1.15.1",
+    "sharp": "0.33.5"
+  }
+}

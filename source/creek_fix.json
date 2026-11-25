@@ -1,0 +1,5 @@
+{
+  "note": "Correção manual do trecho do Triângulo: o canal segue a faixa de mata ciliar vista no satélite (a leste da rua de terra), não a rua. Coordenadas locais em metros.",
+  "replace": [[-722, 352], [-636, -76]],
+  "via": [[-720, 347], [-697, 280], [-660, 230], [-630, 178], [-624, 127], [-637, 78], [-647, 28], [-655, -22], [-636, -76]]
+}
