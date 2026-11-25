@@ -4,6 +4,20 @@ Aimorés 3D – maquete interativa da cidade (lado do Hospital: Triângulo, Soss
 
 Site: abra `index.html` por um servidor (GitHub Pages). Não funciona abrindo o arquivo direto do disco (`file://`), porque os dados são baixados com `fetch`.
 
+![antes e depois](docs/antes-depois.jpg)
+
+## O que tem na v5
+
+- **Mais leve**: download de ~5,5 MB (v4) para ~2,8 MB na qualidade Alta e ~2 MB na Leve; cena com ~1,4 milhão de triângulos na Alta (v4: 3–4 milhões) e ~0,7 milhão na Leve.
+- **Casas alinhadas**: cantos retos, paralelas à rua, recuo uniforme em cada quadra, sem casas sobrepostas.
+- **Ruas**: paralelepípedo de granito, asfalto, terra, calçadas, meio-fio, faixas pintadas e faixas de pedestre no Centro.
+- **Trânsito**: hatch, sedã, SUV, picape, moto, ônibus e caminhão, na mão direita, com carros estacionados; faróis à noite.
+- **Dia e noite**: sol e lua na posição real para Aimorés, estrelas; relógio no horário de Brasília. Os **postes acendem ao anoitecer** e apagam de manhã, janelas acendem à noite.
+- **Córrego** do Triângulo/Centro até o Rio Doce, com leito, margens, mata ciliar, canal de concreto e galerias sob as ruas.
+- **Rio Doce e lago da represa** com reflexo do céu e ondulação.
+- **Árvores** por espécie (mangueira, oiti, coqueiro, palmeira, ipê, flamboyant, eucalipto, mata).
+- **Viadutos** com asfalto novo e postes.
+
 ## Estrutura
 
 | Pasta / arquivo | O que é |
