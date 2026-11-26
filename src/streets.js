@@ -40,22 +40,41 @@ export class Streets {
     this.setupSearch();
   }
 
+  /** name of the nearest named street within 18 m */
+  nameAt(x, z) {
+    let best = null, bd = 18;
+    for (const [name, parts] of this.byName) for (const { r } of parts) {
+      const p = r.p;
+      if (Math.abs(p[0][0] - x) > 600 && Math.abs(p[p.length - 1][0] - x) > 600) continue;
+      for (let i = 0; i < p.length - 1; i++) {
+        const dx = p[i + 1][0] - p[i][0], dz = p[i + 1][1] - p[i][1], L2 = dx * dx + dz * dz || 1;
+        let t = ((x - p[i][0]) * dx + (z - p[i][1]) * dz) / L2; t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(p[i][0] + dx * t - x, p[i][1] + dz * t - z) - (r.w || 6) / 2;
+        if (d < bd) { bd = d; best = name; }
+      }
+    }
+    return best;
+  }
+
   setVisible(v) { this.on = v; if (!v) for (const l of this.labels) l.el.style.display = 'none'; }
 
-  update(camera, W, H, low) {
+  update(camera, W, H, low, maxD = 0) {
     if (!this.on) return;
     const cam = camera.position;
     const boxes = [];
     const vis = [];
     for (const l of this.labels) {
       const d = cam.distanceTo(l.pos);
-      if (d > (low ? 160 : 230)) { l.el.style.display = 'none'; continue; }
+      if (d > (maxD || (low ? 160 : 230))) { l.el.style.display = 'none'; continue; }
       this.v.copy(l.pos).project(camera);
       if (this.v.z > 1 || Math.abs(this.v.x) > 1.05 || Math.abs(this.v.y) > 1.05) { l.el.style.display = 'none'; continue; }
       vis.push({ l, d, x: (this.v.x * 0.5 + 0.5) * W, y: (-this.v.y * 0.5 + 0.5) * H });
     }
     vis.sort((a, b) => a.d - b.d);
+    const shown = new Set();
     for (const v of vis) {
+      if (maxD && shown.has(v.l.name)) { v.l.el.style.display = 'none'; continue; }
+      shown.add(v.l.name);
       const w = 16 + v.l.name.length * 6.4, x0 = v.x - w / 2, y0 = v.y - 12, x1 = v.x + w / 2, y1 = v.y + 12;
       if (boxes.some(b => x0 < b[2] && x1 > b[0] && y0 < b[3] && y1 > b[1])) { v.l.el.style.display = 'none'; continue; }
       boxes.push([x0, y0, x1, y1]);

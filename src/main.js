@@ -18,6 +18,8 @@ import { Places } from './places.js';
 import { Streets } from './streets.js';
 import { Trains } from './train.js';
 import { Sound } from './audio.js';
+import { Explore } from './explore.js';
+import { buildBumps, bumpField } from './bumps.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.has('shot');
@@ -189,6 +191,29 @@ async function main() {
   const traffic = new Traffic(city, T, roadH, day, Q);
   scene.add(traffic.group);
   const trains = new Trains({ city, T, scene, day, sound, Q, legacy: L });
+  // quebra-molas
+  const bumpH = bumpField(city.bumps || []);
+  scene.add(buildBumps(city.bumps || [], T));
+  traffic.bumps = city.bumps || []; traffic.bumpH = bumpH;
+  // walkable / drivable surface height: terrain + street lift + viaduct decks + quebra-molas.
+  // `ref` = current height of the walker/car, so passing under a viaduct does not jump on top.
+  const elevRoads = city.roads.filter(r => viadIds.has(r.id) || [1314627853, 1314627854, 1314627855].includes(r.id));
+  const groundAt = (x, z, ref = 1e9) => {
+    const base = T.at(x, z) + 0.12 + bumpH(x, z);
+    let best = base;
+    for (const r of elevRoads) {
+      for (let i = 0; i < r.p.length - 1; i++) {
+        const [ax, az] = r.p[i], [bx, bz] = r.p[i + 1];
+        if (Math.min(ax, bx) - 8 > x || Math.max(ax, bx) + 8 < x || Math.min(az, bz) - 8 > z || Math.max(az, bz) + 8 < z) continue;
+        const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1;
+        let t = ((x - ax) * dx + (z - az) * dz) / L2; t = Math.max(0, Math.min(1, t));
+        if (Math.hypot(ax + dx * t - x, az + dz * t - z) > (r.w || 8) / 2 + 0.9) continue;
+        const h = roadH(r, x, z);
+        if (h > base + 0.3 && h <= ref + 0.7 && h > best) best = h + 0.05;
+      }
+    }
+    return best;
+  };
   traffic.blockers = trains.blockers();
 
   await say('Postes e iluminação pública…');
@@ -342,6 +367,12 @@ async function main() {
 
   const places = new Places({ places: city.places || [], T, buildings: city.buildings, root: $('pins'), panelBtn: $('placesbtn'), flyTo });
   const streets = new Streets({ city, T, root: $('streets'), flyTo, places });
+  const explore = new Explore({
+    scene, camera, controls, renderer, T, city, groundAt, sound, streets, day,
+    dom: { hud: $('hud'), pad: $('tpad'), stick: $('tstick'), look: $('tlook'), bGas: $('bGas'), bBrake: $('bBrake'), bLeft: $('bLeft'), bRight: $('bRight'), bRun: $('bRun'), bHorn: $('bHorn'), bCam: $('bCam'), bExit: $('bExit') },
+  });
+  $('walkbtn').onclick = () => { if (!sound.on) $('soundbtn').click(); explore.enter('walk'); };
+  $('drivebtn').onclick = () => { if (!sound.on) $('soundbtn').click(); explore.enter('drive'); };
 
   const markers = new L.Markers({
     scene, camera, renderer, controls, labels, H: T, flyTo, panel: $('mkbody'),
@@ -353,7 +384,7 @@ async function main() {
   const toggle = (id, fn) => { const el = $(id); el.onchange = () => { fn(el.checked); wake(); }; fn(el.checked); };
   toggle('t_cars', v => { traffic.group.visible = v; });
   toggle('t_train', v => { trains.group.userData.off = !v; });
-  let labelsOn = true, labelsLow = false;
+  let labelsOn = true, labelsLow = false, labelsX = false;
   toggle('t_labels', v => { labelsOn = v; labels.setGroupVisible('lbl nb', v && !labelsLow); labels.setGroupVisible('lbl poi', v); });
   toggle('t_limits', v => { limits.visible = v; });
   toggle('t_streets', v => streets.setVisible(v));
@@ -430,10 +461,13 @@ async function main() {
       controls.target.lerpVectors(anim.fromT, anim.toT, e);
       if (k >= 1) anim = null;
     }
-    controls.update();
-    controls.target.clamp(bounds.min, bounds.max);
     const gy = T.inside(camera.position.x, camera.position.z) ? T.at(camera.position.x, camera.position.z) : backdrop.userData.heightAt(camera.position.x, camera.position.z);
-    if (camera.position.y < gy + 2) camera.position.y = gy + 2;
+    if (explore.mode) explore.update(dt);
+    else {
+      controls.update();
+      controls.target.clamp(bounds.min, bounds.max);
+      if (camera.position.y < gy + 2) camera.position.y = gy + 2;
+    }
     if (clockRunning) {
       const h = day.hours + dt * clockSpeed / 3600;
       day.setTime(h);
@@ -459,11 +493,13 @@ async function main() {
     markers.tickScale(camera);
     renderer.render(scene, camera);
     // neighbourhood names only from above (they clutter the view at street level)
-    const lowCam = camera.position.distanceTo(controls.target) < 140 && camera.position.y - gy < 60;
+    const lowCam = !!explore.mode || (camera.position.distanceTo(controls.target) < 140 && camera.position.y - gy < 60);
     if (lowCam !== labelsLow) { labelsLow = lowCam; if (labelsOn) labels.setGroupVisible('lbl nb', !lowCam); }
+    const inX = !!explore.mode;
+    if (inX !== labelsX) { labelsX = inX; if (labelsOn) labels.setGroupVisible('lbl poi', !inX); }
     labels.update(camera, innerWidth, innerHeight);
     places.update(camera, innerWidth, innerHeight);
-    streets.update(camera, innerWidth, innerHeight, lowCam);
+    streets.update(camera, innerWidth, innerHeight, lowCam, explore.mode ? 70 : 0);
     // adaptive pixel ratio
     if (!SHOT) {
       if (dt > 0.045) { slowT += dt; fastT = 0; } else if (dt < 0.022) { fastT += dt; slowT = 0; }
@@ -477,7 +513,7 @@ async function main() {
   $('loading').classList.add('done');
   window.__ready = true;
   window.__app = {
-    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, sound, markers, places, goView, flyTo,
+    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, sound, explore, groundAt, markers, places, goView, flyTo,
     setTime: h => { day.setTime(h); shadowDirty = true; syncClock(); },
     setCam: (p, t) => { anim = null; controls.target.set(...t); camera.position.set(...p); controls.update(); },
     renderFrame: (n = 1) => { for (let i = 0; i < n; i++) { renderer.shadowMap.needsUpdate = true; frame(); } return true; },

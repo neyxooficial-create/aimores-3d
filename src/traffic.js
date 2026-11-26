@@ -66,7 +66,7 @@ class VB {
   }
 }
 
-function carGeo(kind) {
+export function carGeo(kind) {
   const v = new VB();
   if (kind === 'hatch' || kind === 'sedan' || kind === 'suv') {
     const L = kind === 'hatch' ? 1.95 : 2.2, W = kind === 'suv' ? 0.92 : 0.86, yb = kind === 'suv' ? 0.36 : 0.27, yt = kind === 'suv' ? 1.02 : 0.86;
@@ -327,6 +327,16 @@ export class Traffic {
       let target = rd.speed * c.vmax;
       if (remaining < 14) target = Math.min(target, 4 + remaining * 0.45); // slow down before junctions
       if (gap < 18) target = Math.min(target, Math.max(0, (gap - 2.5) * 0.9));
+      // slow down for quebra-molas
+      if (this.bumps) {
+        const hx = Math.cos(c.yaw), hz = -Math.sin(c.yaw);
+        for (const b of this.bumps) {
+          const dx = b[0] - c.pos.x, dz = b[1] - c.pos.z;
+          if (dx * dx + dz * dz > 1600) continue;
+          const along = dx * hx + dz * hz, lat = Math.abs(dx * hz - dz * hx);
+          if (along > -2 && along < 35 && lat < b[4] + 1) target = Math.min(target, 2.2 + Math.max(0, along) * 0.3);
+        }
+      }
       // stop at closed level crossings / red lights
       if (this.blockers) {
         const hx = Math.cos(c.yaw), hz = -Math.sin(c.yaw);
@@ -349,7 +359,7 @@ export class Traffic {
       const yawT = Math.atan2(-p.dz * c.dir, p.dx * c.dir);
       let dy = yawT - c.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
       c.yaw += dt > 0 ? dy * Math.min(1, dt * 8) : dy;
-      const y = this.roadH(r2.r, p.x, p.z);
+      const y = this.roadH(r2.r, p.x, p.z) + (this.bumpH ? this.bumpH(p.x, p.z) : 0);
       c.pos.set(p.x, y, p.z);
       q.setFromAxisAngle(up, c.yaw);
       M.compose(c.pos, q, one);

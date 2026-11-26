@@ -499,6 +499,43 @@ if (fs.existsSync(path.join(SRC, 'overture_places_place.json'))) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Quebra-molas (lombadas). No public data source reachable from here lists the real ones, so they
+// are placed where the municipality usually puts them — in front of schools, churches, the hospital,
+// clinics and the praça — on paved local streets. source/quebra_molas.json overrides/extends:
+//   { "remove": [[x,z],...], "add": [[x,z],...] }   (metres, map coordinates)
+// ---------------------------------------------------------------------------------------------
+const bumps = [];
+{
+  const fix = fs.existsSync(path.join(SRC, 'quebra_molas.json')) ? JSON.parse(fs.readFileSync(path.join(SRC, 'quebra_molas.json'), 'utf8')) : {};
+  const viad = new Set([...((C.viaduct2 || {}).ways || []).map(w => w.id), 1314627853, 1314627854, 1314627855]);
+  const cand = C.roads.filter(r => !viad.has(r.id) && !r.b && ['residential', 'tertiary', 'unclassified', 'secondary'].includes(r.hw) && r.s !== 'dirt');
+  const nearestRoad = (x, z, maxD) => {
+    let best = null;
+    for (const r of cand) for (let i = 0; i < r.p.length - 1; i++) {
+      const q = segPointDist(x, z, r.p[i][0], r.p[i][1], r.p[i + 1][0], r.p[i + 1][1]);
+      if (q.d < maxD && (!best || q.d < best.d)) best = { ...q, r, i };
+    }
+    return best;
+  };
+  const targets = [];
+  for (const pl of places) if (['educacao', 'igrejas'].includes(pl[3]) || /hospital|clinic|surgery|medical/.test(pl[4])) targets.push([pl[1], pl[2], pl[0]]);
+  for (const [n, x, z] of C.extras.poi) if (/Hospital|Igreja|Praça/.test(n)) targets.push([x, z, n]);
+  for (const a of fix.add || []) targets.push([a[0], a[1], 'manual']);
+  for (const [x, z, why] of targets) {
+    const q = nearestRoad(x, z, why === 'manual' ? 30 : 28);
+    if (!q) continue;
+    const r = q.r, [ax, az] = r.p[q.i], [bx, bz] = r.p[q.i + 1];
+    const L = Math.hypot(bx - ax, bz - az) || 1;
+    // keep clear of junction ends (≥ 12 m along the street)
+    if (q.t * L < 6 && q.i === 0 || (1 - q.t) * L < 6 && q.i === r.p.length - 2) continue;
+    if (bumps.some(b => Math.hypot(b[0] - q.px, b[1] - q.pz) < 45)) continue;
+    if ((fix.remove || []).some(([rx, rz]) => Math.hypot(rx - q.px, rz - q.pz) < 10)) continue;
+    bumps.push([round(q.px, 2), round(q.pz, 2), round((bx - ax) / L, 4), round((bz - az) / L, 4), round((r.w || 7) / 2, 2), r.id, why.slice(0, 40)]);
+  }
+  log('quebra-molas', bumps.length);
+}
+
+// ---------------------------------------------------------------------------------------------
 // city.json
 // ---------------------------------------------------------------------------------------------
 const rp = a => a.map(([x, z]) => [round(x), round(z)]);
@@ -521,6 +558,7 @@ const city = {
   creek,
   creeks,
   places,
+  bumps,
 };
 fs.writeFileSync(path.join(OUT, 'city.json'), JSON.stringify(city));
 

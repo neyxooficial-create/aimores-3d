@@ -80,6 +80,26 @@ details summary{cursor:pointer;padding:6px 2px;color:#93c5fd;font-weight:600}
 }
 
 
+
+button.hot{background:#0f766e;border-color:#2dd4bf;font-weight:600}
+#hud{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);padding:8px 12px;display:none;z-index:9;min-width:min(420px,92vw)}
+#hud.show{display:block}
+.hrow{display:flex;align-items:center;gap:12px}.hspd{display:flex;align-items:baseline;gap:4px;min-width:84px}.hspd .hs{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums}
+.hinfo{flex:1;display:flex;flex-direction:column}.hinfo b{font-size:15px}.hinfo span{font-size:12px;opacity:.8}
+.hhelp{font-size:11.5px;opacity:.75;margin-top:4px;display:none}#hud[data-mode=walk] .hhelp.walk,#hud[data-mode=drive] .hhelp.drive{display:block}
+body.exploring #layers,body.exploring #mkpanel,body.exploring #placespanel,body.exploring #top .views button:not(#helpbtn),body.exploring #searchbox,body.exploring #top .sub{display:none!important}
+#tctl{display:none}
+@media (pointer:coarse){
+ body.exploring #tctl{display:block}
+ #tpad{position:fixed;left:22px;bottom:110px;width:130px;height:130px;border-radius:50%;background:rgba(15,23,42,.35);border:2px solid rgba(255,255,255,.35);z-index:8;touch-action:none}
+ #tstick{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.55);pointer-events:none}
+ #tlook{position:fixed;right:0;top:90px;bottom:100px;width:55vw;z-index:7;touch-action:none}
+ #tbtns{position:fixed;right:18px;bottom:120px;display:flex;flex-direction:column;gap:10px;z-index:8}
+ #tbtns button{width:56px;height:56px;border-radius:50%;font-size:22px;background:rgba(15,23,42,.6)}
+ #hud{bottom:8px}.hhelp{display:none!important}
+ body[data-xmode=walk] .driveonly,body[data-xmode=drive] .walkonly{display:none}
+}
+body:not(.exploring) .driveonly,body:not(.exploring) .walkonly{display:none}
 .street{position:absolute;left:0;top:0;white-space:nowrap;pointer-events:none;will-change:transform;background:#1d4ed8;color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:3px;border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.5);letter-spacing:.2px}
 #searchbox{position:relative;margin-top:8px}
 #search{width:100%;background:#0f172a;color:#eef2f7;border:1px solid #475569;border-radius:9px;padding:7px 10px;font:inherit;font-size:13px}
@@ -109,11 +129,16 @@ details summary{cursor:pointer;padding:6px 2px;color:#93c5fd;font-weight:600}
 </style></head><body>
 <div id="app"></div><div id="labels"></div>
 <div id="top" class="glass"><h1>Aimorés 3D · lado do Hospital</h1><div class="sub">Triângulo · Sossego · Residencial Nilton Freire Sampaio · Centro (da igreja até o viaduto) · córrego e Rio Doce</div>
-<div class="views"><button data-view="geral">Visão geral</button><button data-view="residencial">Residencial</button><button data-view="triangulo">Triângulo</button><button data-view="sossego">Sossego</button><button data-view="igreja">Igreja</button><button data-view="praca">Praça</button><button data-view="viaduto">Viaduto</button><button data-view="viadutocentro">Viaduto do centro</button><button data-view="corrego">Córrego Natividade</button><button data-view="canal">Canal do Triângulo</button><button data-view="rio">Rio Doce</button><button data-view="hospital">Hospital</button><button id="touchmode" class="mob">✋ 1 dedo: mover</button><button id="layersbtn" class="mob">⚙ Opções</button><button id="helpbtn">?</button></div><div id="searchbox"><input id="search" placeholder="🔍 Buscar rua ou lugar (ex.: Pedro Nolasco, farmácia)" autocomplete="off"><div id="searchres" class="glass"></div></div></div>
+<div class="views"><button data-view="geral">Visão geral</button><button data-view="residencial">Residencial</button><button data-view="triangulo">Triângulo</button><button data-view="sossego">Sossego</button><button data-view="igreja">Igreja</button><button data-view="praca">Praça</button><button data-view="viaduto">Viaduto</button><button data-view="viadutocentro">Viaduto do centro</button><button data-view="corrego">Córrego Natividade</button><button data-view="canal">Canal do Triângulo</button><button data-view="rio">Rio Doce</button><button data-view="hospital">Hospital</button><button id="walkbtn" class="hot">🚶 Passeio a pé</button><button id="drivebtn" class="hot">🚗 Dirigir</button><button id="touchmode" class="mob">✋ 1 dedo: mover</button><button id="layersbtn" class="mob">⚙ Opções</button><button id="helpbtn">?</button></div><div id="searchbox"><input id="search" placeholder="🔍 Buscar rua ou lugar (ex.: Pedro Nolasco, farmácia)" autocomplete="off"><div id="searchres" class="glass"></div></div></div>
 <div id="layers" class="glass"><label><input type="checkbox" id="t_cars" checked>Carros</label><label><input type="checkbox" id="t_train" checked>Trem</label><label><input type="checkbox" id="t_labels" checked>Nomes</label><label><input type="checkbox" id="t_streets" checked>Ruas</label><label><input type="checkbox" id="t_limits">Limites dos bairros</label><label><input type="checkbox" id="t_trees" checked>Árvores</label><label><input type="checkbox" id="t_shadows" checked>Sombras</label><label><input type="checkbox" id="t_lamps" checked>Postes</label><button id="placesbtn">🏪 Comércios</button><button id="soundbtn">🔇 Som</button><button id="trainbtn">🚆 Ver trem</button><div id="trainnext" style="flex-basis:100%;font-size:12px;opacity:.9"></div>
 <label>Qualidade <select id="quality"><option value="low">Leve</option><option value="medium">Média</option><option value="high">Alta</option><option value="ultra">Ultra</option></select></label>
 <div id="clock"><button id="tplay" class="ic" title="Passar o tempo">▶</button><select id="tspeed" title="Velocidade do relógio"><option value="1">tempo real</option><option value="60">1 min/s</option><option value="600" selected>10 min/s</option><option value="3600">1 h/s</option></select><input type="range" id="hour" min="0" max="24" step="0.01" aria-label="Horário"><span class="t" id="hourlbl"></span><button id="tnow" class="ic" title="Horário de agora (Brasília)">Agora</button></div></div>
 <div id="mkpanel" class="glass"><div id="mkhead"><span class="grab"></span><button id="mktoggle" title="Abrir/fechar">☰</button><b>📍 Marcadores</b><span id="mkstatus"></span></div><div id="mkbody"></div></div>
+<div id="hud" class="glass"><div class="hrow"><div class="hspd"><span class="hs">0</span><small class="hu">km/h</small></div><div class="hinfo"><b class="hn">—</b><span class="hc">--:--</span></div><button id="bExit">✕ Sair</button></div>
+<div class="hhelp walk">W A S D / setas: andar · Shift: correr · arraste o mouse (ou clique) para olhar · Esc: sair</div>
+<div class="hhelp drive">W/↑ acelerar · S/↓ frear e ré · A D / ← →: virar · Espaço: freio de mão · H: buzina · C: câmera · L: faróis · roda do mouse: distância · Esc: sair</div></div>
+<div id="tctl"><div id="tpad"><div id="tstick"></div></div><div id="tlook"></div>
+<div id="tbtns"><button id="bRun" class="walkonly">🏃</button><button id="bHorn" class="driveonly">📯</button><button id="bCam" class="driveonly">🎥</button></div></div>
 <div id="toast" class="glass"></div>
 <div id="streets" style="position:fixed;inset:0;pointer-events:none;overflow:hidden"></div>
 <div id="pins" style="position:fixed;inset:0;pointer-events:none;overflow:hidden"></div>
