@@ -19,6 +19,7 @@ import { Streets } from './streets.js';
 import { Trains } from './train.js';
 import { Sound } from './audio.js';
 import { Explore } from './explore.js';
+import { People } from './people.js';
 import { buildBumps, bumpField } from './bumps.js';
 
 const params = new URLSearchParams(location.search);
@@ -191,6 +192,7 @@ async function main() {
   const traffic = new Traffic(city, T, roadH, day, Q);
   scene.add(traffic.group);
   const trains = new Trains({ city, T, scene, day, sound, Q, legacy: L });
+  const people = new People({ city, T, scene, day, Q });
   // quebra-molas
   const bumpH = bumpField(city.bumps || []);
   scene.add(buildBumps(city.bumps || [], T));
@@ -383,6 +385,7 @@ async function main() {
   document.querySelectorAll('[data-view]').forEach(b => { b.onclick = () => goView(b.dataset.view); });
   const toggle = (id, fn) => { const el = $(id); el.onchange = () => { fn(el.checked); wake(); }; fn(el.checked); };
   toggle('t_cars', v => { traffic.group.visible = v; });
+  toggle('t_people', v => { people.mesh.visible = v; });
   toggle('t_train', v => { trains.group.userData.off = !v; });
   let labelsOn = true, labelsLow = false, labelsX = false;
   toggle('t_labels', v => { labelsOn = v; labels.setGroupVisible('lbl nb', v && !labelsLow); labels.setGroupVisible('lbl poi', v); });
@@ -478,6 +481,7 @@ async function main() {
     if (trees.visible) trees.userData.update(camera, controls.target);
     if (traffic.group.visible) traffic.tick(dt);
     trains.update(dt, day.hours, clockRunning ? clockSpeed : 1, camera);
+    people.update(dt, day.hours, camera);
     { const bl = trains.blockers(); for (let i = 0; i < bl.length; i++) traffic.blockers[i].closed = bl[i].closed; }
     sound.update(camera, { night: day.night, urban: 1 });
     if (performance.now() - lastTrainUi > 1000) { lastTrainUi = performance.now(); updateTrainUi(); }
@@ -513,7 +517,7 @@ async function main() {
   $('loading').classList.add('done');
   window.__ready = true;
   window.__app = {
-    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, sound, explore, groundAt, markers, places, goView, flyTo,
+    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, people, sound, explore, groundAt, markers, places, goView, flyTo,
     setTime: h => { day.setTime(h); shadowDirty = true; syncClock(); },
     setCam: (p, t) => { anim = null; controls.target.set(...t); camera.position.set(...p); controls.update(); },
     renderFrame: (n = 1) => { for (let i = 0; i < n; i++) { renderer.shadowMap.needsUpdate = true; frame(); } return true; },
