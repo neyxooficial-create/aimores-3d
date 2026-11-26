@@ -16,6 +16,8 @@ import { buildRailLite } from './rail.js';
 import { buildBuildings } from './buildings.js';
 import { Places } from './places.js';
 import { Streets } from './streets.js';
+import { Trains } from './train.js';
+import { Sound } from './audio.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.has('shot');
@@ -154,7 +156,7 @@ async function main() {
   if (rail.group) scene.remove(rail.group);
   const railway = buildRailLite(city, T);
   scene.add(railway);
-  const train = L.Train(rail.paths, scene);
+  const sound = new Sound();
   const viaduct = L.buildViaductVale(city, T, scene, rail.paths);
   const viaduct2 = L.buildViaductCentro(city, T, scene, rail.paths);
   L.buildClub(city, T, scene);
@@ -186,6 +188,8 @@ async function main() {
   };
   const traffic = new Traffic(city, T, roadH, day, Q);
   scene.add(traffic.group);
+  const trains = new Trains({ city, T, scene, day, sound, Q, legacy: L });
+  traffic.blockers = trains.blockers();
 
   await say('Postes e iluminação pública…');
   // the old viaduct builders used a very dark asphalt: give them the new one
@@ -348,7 +352,7 @@ async function main() {
   document.querySelectorAll('[data-view]').forEach(b => { b.onclick = () => goView(b.dataset.view); });
   const toggle = (id, fn) => { const el = $(id); el.onchange = () => { fn(el.checked); wake(); }; fn(el.checked); };
   toggle('t_cars', v => { traffic.group.visible = v; });
-  toggle('t_train', v => { train.group.userData.off = !v; });
+  toggle('t_train', v => { trains.group.userData.off = !v; });
   let labelsOn = true, labelsLow = false;
   toggle('t_labels', v => { labelsOn = v; labels.setGroupVisible('lbl nb', v && !labelsLow); labels.setGroupVisible('lbl poi', v); });
   toggle('t_limits', v => { limits.visible = v; });
@@ -397,7 +401,21 @@ async function main() {
   function wake() { awake = true; idle = 0; }
   controls.addEventListener('change', wake);
   if (Q === 'medium' || Q === 'low') renderer.shadowMap.autoUpdate = false;
-  let lastClockUi = 0;
+  let lastClockUi = 0, lastTrainUi = 0;
+  const fmtH = h => `${String(Math.floor(h) % 24).padStart(2, '0')}:${String(Math.round((h % 1) * 60) % 60).padStart(2, '0')}`;
+  function updateTrainUi() {
+    const el = $('trainnext'); if (!el) return;
+    const act = trains.active.filter(s => s.run.type === 'passageiro');
+    const up = trains.upcoming(day.hours, 3);
+    let html = act.length ? `<b>🚆 ${act[0].dt < 0 ? 'Chegando' : act[0].dt < act[0].run.stop ? 'Na estação' : 'Saindo'}:</b> trem de passageiros → ${act[0].run.dest}` : '';
+    if (!html) { const nx = up.find(u => u.type === 'passageiro'); if (nx) html = `🚆 Próximo trem de passageiros: <b>${fmtH(nx.h)}</b> → ${nx.dest}`; }
+    const fr = trains.active.filter(s => s.run.type !== 'passageiro');
+    if (fr.length) html += `<br>🚂 ${fr.length > 1 ? fr.length + ' trens de carga' : 'Trem de carga'} passando agora`;
+    if (trains.crossings.some(c => c.closed)) html += ' · <b style="color:#f87171">cancela fechada</b>';
+    el.innerHTML = html;
+  }
+  $('trainbtn') && ($('trainbtn').onclick = () => { const p = trains.focus(); flyTo(new THREE.Vector3(p[0], p[1], p[2]), 140, 1.0); });
+  $('soundbtn') && ($('soundbtn').onclick = () => { if (sound.on) { sound.stop(); $('soundbtn').textContent = '🔇 Som'; $('soundbtn').classList.remove('on'); } else { sound.start(); $('soundbtn').textContent = '🔊 Som'; $('soundbtn').classList.add('on'); } });
   // adaptive resolution: drop pixel ratio when frames are slow
   let pr = basePR, slowT = 0, fastT = 0;
   const fpsEl = $('fps');
@@ -425,7 +443,10 @@ async function main() {
     day.update(dt, camera, controls.target);
     if (trees.visible) trees.userData.update(camera, controls.target);
     if (traffic.group.visible) traffic.tick(dt);
-    if (train.group.userData.off) train.group.visible = false; else train.tick(dt);
+    trains.update(dt, day.hours, clockRunning ? clockSpeed : 1, camera);
+    { const bl = trains.blockers(); for (let i = 0; i < bl.length; i++) traffic.blockers[i].closed = bl[i].closed; }
+    sound.update(camera, { night: day.night, urban: 1 });
+    if (performance.now() - lastTrainUi > 1000) { lastTrainUi = performance.now(); updateTrainUi(); }
     // shadows: refresh lazily on weaker settings
     if (!renderer.shadowMap.autoUpdate) {
       frames++;
@@ -456,7 +477,7 @@ async function main() {
   $('loading').classList.add('done');
   window.__ready = true;
   window.__app = {
-    THREE, scene, camera, controls, renderer, city, T, day, traffic, markers, places, goView, flyTo,
+    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, sound, markers, places, goView, flyTo,
     setTime: h => { day.setTime(h); shadowDirty = true; syncClock(); },
     setCam: (p, t) => { anim = null; controls.target.set(...t); camera.position.set(...p); controls.update(); },
     renderFrame: (n = 1) => { for (let i = 0; i < n; i++) { renderer.shadowMap.needsUpdate = true; frame(); } return true; },

@@ -5022,5 +5022,5 @@ export const legacy = {
   viaductCentroExclusion: xa, viaductCentroHeight: Gd, buildRail: Dd, Train: Nd,
   Labels: ba, Markers: Ta, Traffic: Ma, buildWalls: vd, buildBuildings: _d, buildRoads: xd, buildWater: yd,
   buildTrees: Td, buildTerrain: ld, buildBackdrop: hd, TerrainSampler: ca, decodeB64: la, cloudDome: Bd,
-  srgb: bt, hash: qt,
+  srgb: bt, hash: qt, locoGeo: a1, wagonGeo: c1,
 };

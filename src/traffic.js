@@ -327,6 +327,17 @@ export class Traffic {
       let target = rd.speed * c.vmax;
       if (remaining < 14) target = Math.min(target, 4 + remaining * 0.45); // slow down before junctions
       if (gap < 18) target = Math.min(target, Math.max(0, (gap - 2.5) * 0.9));
+      // stop at closed level crossings / red lights
+      if (this.blockers) {
+        const hx = Math.cos(c.yaw), hz = -Math.sin(c.yaw);
+        for (const b of this.blockers) {
+          if (!b.closed) continue;
+          const dx = b.x - c.pos.x, dz = b.z - c.pos.z;
+          if (dx * dx + dz * dz > 3600) continue;
+          const along = dx * hx + dz * hz, lat = Math.abs(dx * hz - dz * hx);
+          if (along > 5 && along < 60 && lat < 7) target = Math.min(target, Math.max(0, (along - 12.5 - c.len / 2) * 0.8));
+        }
+      }
       c.v += Math.max(-6 * dt, Math.min(2.2 * dt, target - c.v));
       c.v = Math.max(0, c.v);
       c.s += c.v * dt;
