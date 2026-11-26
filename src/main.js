@@ -13,6 +13,7 @@ import { buildTrees } from './trees.js';
 import { buildRoads, asphaltTexture } from './roads.js';
 import { Traffic } from './traffic.js';
 import { buildRailLite } from './rail.js';
+import { buildBuildings } from './buildings.js';
 import { Places } from './places.js';
 import { Streets } from './streets.js';
 
@@ -124,7 +125,9 @@ async function main() {
     const dx = x - fr.C[0], dz = z - fr.C[1], f = dx * fr.f[0] + dz * fr.f[1], r = dx * fr.r[0] + dz * fr.r[1];
     return Math.abs(r) < fr.fx + 2 && f > fr.fz0 - 2 && f < fr.fz1 + 2;
   };
-  const buildings = L.buildBuildings(city, T, scene, inChurch, Q);
+  const buildings = buildBuildings(city, T, { skip: inChurch, quality: Q });
+  scene.add(buildings);
+  console.log('buildings', JSON.stringify(buildings.userData.stats));
   {
     // keep trees and walls off the railway
     const segs = [];

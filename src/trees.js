@@ -93,7 +93,7 @@ function trunk(gb, h, r0, r1, sides, color, lean = [0, 0], y0 = -0.3) {
 
 /** Archetype geometries: each is unit-ish sized; instances scale them. */
 function makeArchetypes(near, Q) {
-  const bark = srgb(98, 80, 62), barkLight = srgb(190, 182, 168), palmBark = srgb(150, 136, 112);
+  const bark = srgb(122, 104, 84), barkLight = srgb(190, 182, 168), palmBark = srgb(150, 136, 112);
   const A = {};
   const det = near ? 1 : Q === 'low' ? -1 : 0;
   const sides = near ? 6 : 3;
@@ -175,7 +175,7 @@ function treeMaterial(opts, time) {
   m.onBeforeCompile = sh => {
     sh.uniforms.uTime = time;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float crown;\nuniform float uTime;')
+      .replace('#include <common>', '#include <common>\nattribute float crown;\nuniform float uTime;\nvarying float vCrown;')
       .replace('#include <color_vertex>', `
 #if defined( USE_COLOR_ALPHA )
   vColor = vec4( 1.0 );
@@ -189,6 +189,7 @@ function treeMaterial(opts, time) {
   vColor.xyz *= mix(vec3(1.0), instanceColor.xyz, crown);
 #endif`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
+  vCrown = crown;
 #ifdef USE_INSTANCING
   {
     vec3 ip = instanceMatrix[3].xyz;
@@ -199,7 +200,15 @@ function treeMaterial(opts, time) {
   }
 #endif`);
   };
-  m.customProgramCacheKey = () => 'tree' + (opts.map ? 'm' : '') + (opts.alphaTest ? 'a' : '');
+  const prevOBC = m.onBeforeCompile;
+  m.onBeforeCompile = sh => {
+    prevOBC(sh);
+    // trunks / branches (crown = 0) ignore the leaf texture: solid bark, no alpha cut-outs
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vCrown;')
+      .replace('#include <map_fragment>', '#include <map_fragment>\n  if (vCrown < 0.5) diffuseColor = vec4(diffuse, opacity);');
+  };
+  m.customProgramCacheKey = () => 'tree2' + (opts.map ? 'm' : '') + (opts.alphaTest ? 'a' : '');
   return m;
 }
 
