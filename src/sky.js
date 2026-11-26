@@ -44,7 +44,7 @@ void main() {
 }`;
 const skyFrag = /* glsl */`
 uniform vec3 zenith, horizon, sunDir, moonDir, sunCol, cloudCol, glowCol;
-uniform float night, time, clouds, moonPhase, sunVis;
+uniform float night, time, clouds, moonPhase, sunVis, cover;
 varying vec3 vDir;
 float h31(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -94,9 +94,9 @@ void main() {
   if (clouds > 0.5 && d.y > 0.005) {
     vec2 uv = d.xz / (d.y + 0.12) * 1.4 + vec2(time * 0.004, time * 0.0015);
     float n = fbm(uv + vec2(3.0, 1.0));
-    float c = smoothstep(0.55, 0.8, n) * smoothstep(0.005, 0.14, d.y);
+    float c = smoothstep(0.55 - cover * 0.42, 0.8 - cover * 0.3, n) * smoothstep(0.005, 0.14, d.y);
     float sh = fbm(uv * 1.04 + sunDir.xz * 0.06 + vec2(3.0, 1.0));
-    vec3 cc = mix(cloudCol, cloudCol * 0.62, smoothstep(0.55, 0.85, sh));
+    vec3 cc = mix(cloudCol, cloudCol * 0.62, smoothstep(0.55, 0.85, sh)) * (1.0 - 0.45 * cover);
     cc += glowCol * 0.6 * glow * (1.0 - h);
     col = mix(col, cc, c * 0.88);
   }
@@ -128,7 +128,7 @@ export class DayCycle {
       uniforms: {
         zenith: this.uniforms.uZenith, horizon: this.uniforms.uHorizon, sunDir: { value: this.sunDir }, moonDir: { value: this.moonDir },
         sunCol: this.uniforms.uSunCol, cloudCol: { value: new THREE.Color() }, glowCol: { value: new THREE.Color() },
-        night: this.uniforms.uNight, time: this.uniforms.uTime, clouds: { value: quality === 'low' ? 0 : 1 },
+        night: this.uniforms.uNight, time: this.uniforms.uTime, clouds: { value: 1 }, cover: { value: 0 },
         moonPhase: { value: this.phase }, sunVis: { value: 1 },
       },
     });
@@ -214,6 +214,7 @@ export class DayCycle {
     this.hemi.color.copy(zen).lerp(new THREE.Color(0.8, 0.88, 1), 0.45 * day).lerp(new THREE.Color(0.25, 0.32, 0.55), this.night * 0.6);
     this.hemi.groundColor.setRGB(0.42, 0.36, 0.26).multiplyScalar(0.25 + 0.75 * day);
     this.hemi.intensity = lerp(0.25, 1.1, day);
+    this.sunBase = this.sun.intensity; this.hemiBase = this.hemi.intensity;
     this.scene.fog.color.copy(hor);
     this.renderer.toneMappingExposure = lerp(1.1, 0.82, day);
     if (this.useEnv && Math.abs(this.hours - this.envHours) > 0.15 && Math.abs(this.hours - this.envHours) < 23.85) this._updateEnv();

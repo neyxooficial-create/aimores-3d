@@ -20,6 +20,7 @@ import { Trains } from './train.js';
 import { Sound } from './audio.js';
 import { Explore } from './explore.js';
 import { People } from './people.js';
+import { Weather } from './weather.js';
 import { buildChurch as buildChurchV6, buildStation as buildStationV6, buildPraca as buildPracaV6 } from './landmarks.js';
 import { buildBumps, bumpField } from './bumps.js';
 
@@ -205,6 +206,10 @@ async function main() {
   scene.add(traffic.group);
   const trains = new Trains({ city, T, scene, day, sound, Q, legacy: L });
   const people = new People({ city, T, scene, day, Q });
+  const weather = new Weather({ scene, day, renderer, Q });
+  { const ms = []; for (const g of [roads, buildings]) g.traverse(o => { if (o.isMesh) ms.push(o.material); }); weather.addWet(ms); }
+  const wsel = $('weather'); if (wsel) wsel.onchange = () => { weather.set(wsel.value); wake(); };
+  if (params.get('tempo')) { weather.set(params.get('tempo')); if (wsel) wsel.value = params.get('tempo'); }
   // quebra-molas
   const bumpH = bumpField(city.bumps || []);
   scene.add(buildBumps(city.bumps || [], T));
@@ -486,7 +491,8 @@ async function main() {
     trains.update(dt, day.hours, clockRunning ? clockSpeed : 1, camera);
     people.update(dt, day.hours, camera);
     { const bl = trains.blockers(); for (let i = 0; i < bl.length; i++) traffic.blockers[i].closed = bl[i].closed; }
-    sound.update(camera, { night: day.night, urban: 1 });
+    const wx = weather.update(SHOT ? 1 : dt, camera, day.hours, explore.mode ? 30 : camera.position.distanceTo(controls.target));
+    sound.update(camera, { night: day.night, urban: 1, rain: wx.rain });
     if (performance.now() - lastTrainUi > 1000) { lastTrainUi = performance.now(); updateTrainUi(); }
     // shadows: refresh lazily on weaker settings
     if (!renderer.shadowMap.autoUpdate) {
@@ -520,7 +526,7 @@ async function main() {
   $('loading').classList.add('done');
   window.__ready = true;
   window.__app = {
-    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, people, sound, explore, groundAt, markers, places, goView, flyTo,
+    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, people, weather, sound, explore, groundAt, markers, places, goView, flyTo,
     setTime: h => { day.setTime(h); shadowDirty = true; syncClock(); },
     setCam: (p, t) => { anim = null; controls.target.set(...t); camera.position.set(...p); controls.update(); },
     renderFrame: (n = 1) => { for (let i = 0; i < n; i++) { renderer.shadowMap.needsUpdate = true; frame(); } return true; },
