@@ -2,8 +2,8 @@
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#0f172a">
 <title>Aimorés 3D · lado do Hospital</title>
-<link rel="preload" href="data/city.json?v=c731508432" as="fetch" crossorigin>
-<link rel="preload" href="data/geo.bin.gz?v=c731508432" as="fetch" crossorigin>
+<link rel="preload" href="data/city.json?v=845ce998fb" as="fetch" crossorigin>
+<link rel="preload" href="data/geo.bin.gz?v=845ce998fb" as="fetch" crossorigin>
 <style>
 *{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#9fb4c6;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#eef2f7}
 #app{position:fixed;inset:0}#app canvas{display:block;touch-action:none}
@@ -13,19 +13,19 @@
 .lbl.poi{font-size:12px;background:rgba(15,23,42,.72);padding:3px 8px;border-radius:10px;border:1px solid rgba(255,255,255,.25)}
 .lbl.mark{font-size:12px;background:rgba(15,23,42,.85);padding:3px 8px;border-radius:8px;border:2px solid #fff;pointer-events:auto}
 .glass{background:rgba(15,23,42,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.25)}
-#top{position:fixed;left:12px;top:12px;padding:10px 12px;max-width:min(560px,calc(100vw - 24px))}
+#top{position:fixed;z-index:8;left:12px;top:12px;padding:10px 12px;max-width:min(560px,calc(100vw - 24px))}
 #top h1{margin:0 0 2px;font-size:17px}#top .sub{font-size:11.5px;opacity:.75;margin-bottom:8px}
 .views{display:flex;flex-wrap:wrap;gap:6px}
 button,.btn{background:rgba(255,255,255,.1);color:#eef2f7;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:6px 10px;font-size:12.5px;cursor:pointer;font-family:inherit}
 button:hover,.btn:hover{background:rgba(255,255,255,.2)}button.on{background:#2563eb;border-color:#60a5fa}
-#layers{position:fixed;left:12px;bottom:12px;padding:10px 12px;font-size:12.5px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;max-width:min(600px,calc(100vw - 24px))}
+#layers{position:fixed;z-index:5;left:12px;bottom:12px;padding:10px 12px;font-size:12.5px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;max-width:min(600px,calc(100vw - 24px))}
 #layers label{display:flex;align-items:center;gap:5px;cursor:pointer}
 select{background:#1e293b;color:#eef2f7;border:1px solid #475569;border-radius:7px;padding:3px}
 #clock{display:flex;align-items:center;gap:8px;flex-basis:100%;padding-top:4px;border-top:1px solid rgba(255,255,255,.1)}
 #clock input[type=range]{flex:1;min-width:120px;accent-color:#f59e0b}
 #clock .t{font-variant-numeric:tabular-nums;font-weight:700;font-size:15px;min-width:48px;text-align:center}
 #clock .ic{font-size:15px;padding:4px 9px}
-#mkpanel{position:fixed;right:12px;top:12px;bottom:12px;width:320px;display:flex;flex-direction:column;transition:transform .25s}
+#mkpanel{position:fixed;z-index:5;right:12px;top:12px;bottom:12px;width:320px;display:flex;flex-direction:column;transition:transform .25s}
 #mkpanel.closed{transform:translateX(calc(100% - 44px))}
 #mkhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1)}
 #mkhead b{flex:1;font-size:15px}#mktoggle{padding:4px 9px}
@@ -78,16 +78,47 @@ details summary{cursor:pointer;padding:6px 2px;color:#93c5fd;font-weight:600}
  #toast{bottom:76px;font-size:14px;max-width:90vw;text-align:center}
  .lbl.nb{font-size:12px}.lbl.poi{font-size:11px}
 }
+
+
+.street{position:absolute;left:0;top:0;white-space:nowrap;pointer-events:none;will-change:transform;background:#1d4ed8;color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:3px;border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.5);letter-spacing:.2px}
+#searchbox{position:relative;margin-top:8px}
+#search{width:100%;background:#0f172a;color:#eef2f7;border:1px solid #475569;border-radius:9px;padding:7px 10px;font:inherit;font-size:13px}
+#searchres{display:none;position:absolute;left:0;right:0;top:100%;margin-top:4px;max-height:50vh;overflow:auto;padding:4px;z-index:9}
+#searchres.show{display:block}
+.sr{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px;cursor:pointer}.sr:hover{background:rgba(255,255,255,.1)}.sr b{display:block;font-size:13px}.sr small{display:block;font-size:11px;opacity:.7}
+.pin{position:absolute;left:0;top:0;display:flex;align-items:center;gap:4px;padding:2px 7px 2px 2px;border-radius:14px;background:rgba(15,23,42,.86);border:2px solid var(--c);font-size:11.5px;font-weight:600;white-space:nowrap;pointer-events:auto;cursor:pointer;will-change:transform;box-shadow:0 2px 6px rgba(0,0,0,.35)}
+.pin i{font-style:normal;display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--c);color:#fff;font-size:11px}
+.pin::after{content:'';position:absolute;left:50%;bottom:-7px;margin-left:-5px;border:5px solid transparent;border-top-color:var(--c);border-bottom:0}
+.pin.far span{display:none}.pin.far{padding:2px}.pin.sel{transform-origin:center;outline:3px solid #fff}
+#placespanel{position:fixed;left:12px;bottom:12px;width:min(380px,calc(100vw - 24px));max-height:min(62vh,560px);display:none;flex-direction:column;padding:10px 12px;z-index:6}
+#placespanel.show{display:flex}
+#placespanel .ph{display:flex;align-items:center;gap:8px;flex-wrap:wrap}#placespanel .ph b{font-size:15px}#placespanel .ph .ic{margin-left:auto}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}
+.chip{display:flex;align-items:center;gap:4px;font-size:12px;padding:4px 8px;opacity:.45}.chip.on{opacity:1;border-color:var(--c)}.chip i{font-style:normal}.chip b{font-weight:600;opacity:.8}
+#placesearch{background:#0f172a;color:#eef2f7;border:1px solid #475569;border-radius:8px;padding:7px 9px;font:inherit;margin-bottom:6px}
+.plist{overflow:auto;flex:1;min-height:80px}
+.prow{display:flex;gap:8px;align-items:center;padding:6px 4px;border-radius:8px;cursor:pointer}.prow:hover{background:rgba(255,255,255,.08)}
+.prow i{font-style:normal;flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--c);font-size:13px}
+.prow b{display:block;font-size:13px}.prow small{display:block;font-size:11px;opacity:.7}
+#placecard{position:fixed;right:12px;bottom:12px;width:min(320px,calc(100vw - 24px));padding:12px 14px;display:none;z-index:7;font-size:13px;line-height:1.45}
+#placecard.show{display:block}#placecard h4{margin:4px 0 6px;font-size:16px}#placecard .ic{position:absolute;right:8px;top:6px}
+#placecard .pc-k{display:inline-block;background:var(--c);padding:2px 8px;border-radius:10px;font-size:11.5px;font-weight:600}#placecard button#pcgo{margin-top:8px}
+#placesbtn.on{background:#b45309;border-color:#f59e0b}
+@media (max-width:760px){#placespanel{left:0;right:0;bottom:0;width:auto;border-radius:18px 18px 0 0;max-height:60vh}#placecard{left:8px;right:8px;width:auto;bottom:70px}.pin{font-size:11px}}
 @media (max-width:760px){#mkpanel:not(.closed)~#toast{bottom:calc(62vh + 12px)}}
 </style></head><body>
 <div id="app"></div><div id="labels"></div>
 <div id="top" class="glass"><h1>Aimorés 3D · lado do Hospital</h1><div class="sub">Triângulo · Sossego · Residencial Nilton Freire Sampaio · Centro (da igreja até o viaduto) · córrego e Rio Doce</div>
-<div class="views"><button data-view="geral">Visão geral</button><button data-view="residencial">Residencial</button><button data-view="triangulo">Triângulo</button><button data-view="sossego">Sossego</button><button data-view="igreja">Igreja</button><button data-view="praca">Praça</button><button data-view="viaduto">Viaduto</button><button data-view="viadutocentro">Viaduto do centro</button><button data-view="corrego">Córrego Natividade</button><button data-view="canal">Canal do Triângulo</button><button data-view="rio">Rio Doce</button><button data-view="hospital">Hospital</button><button id="touchmode" class="mob">✋ 1 dedo: mover</button><button id="layersbtn" class="mob">⚙ Opções</button><button id="helpbtn">?</button></div></div>
-<div id="layers" class="glass"><label><input type="checkbox" id="t_cars" checked>Carros</label><label><input type="checkbox" id="t_train" checked>Trem</label><label><input type="checkbox" id="t_labels" checked>Nomes</label><label><input type="checkbox" id="t_limits">Limites dos bairros</label><label><input type="checkbox" id="t_trees" checked>Árvores</label><label><input type="checkbox" id="t_shadows" checked>Sombras</label><label><input type="checkbox" id="t_lamps" checked>Postes</label>
+<div class="views"><button data-view="geral">Visão geral</button><button data-view="residencial">Residencial</button><button data-view="triangulo">Triângulo</button><button data-view="sossego">Sossego</button><button data-view="igreja">Igreja</button><button data-view="praca">Praça</button><button data-view="viaduto">Viaduto</button><button data-view="viadutocentro">Viaduto do centro</button><button data-view="corrego">Córrego Natividade</button><button data-view="canal">Canal do Triângulo</button><button data-view="rio">Rio Doce</button><button data-view="hospital">Hospital</button><button id="touchmode" class="mob">✋ 1 dedo: mover</button><button id="layersbtn" class="mob">⚙ Opções</button><button id="helpbtn">?</button></div><div id="searchbox"><input id="search" placeholder="🔍 Buscar rua ou lugar (ex.: Pedro Nolasco, farmácia)" autocomplete="off"><div id="searchres" class="glass"></div></div></div>
+<div id="layers" class="glass"><label><input type="checkbox" id="t_cars" checked>Carros</label><label><input type="checkbox" id="t_train" checked>Trem</label><label><input type="checkbox" id="t_labels" checked>Nomes</label><label><input type="checkbox" id="t_streets" checked>Ruas</label><label><input type="checkbox" id="t_limits">Limites dos bairros</label><label><input type="checkbox" id="t_trees" checked>Árvores</label><label><input type="checkbox" id="t_shadows" checked>Sombras</label><label><input type="checkbox" id="t_lamps" checked>Postes</label><button id="placesbtn">🏪 Comércios</button>
 <label>Qualidade <select id="quality"><option value="low">Leve</option><option value="medium">Média</option><option value="high">Alta</option><option value="ultra">Ultra</option></select></label>
 <div id="clock"><button id="tplay" class="ic" title="Passar o tempo">▶</button><select id="tspeed" title="Velocidade do relógio"><option value="1">tempo real</option><option value="60">1 min/s</option><option value="600" selected>10 min/s</option><option value="3600">1 h/s</option></select><input type="range" id="hour" min="0" max="24" step="0.01" aria-label="Horário"><span class="t" id="hourlbl"></span><button id="tnow" class="ic" title="Horário de agora (Brasília)">Agora</button></div></div>
 <div id="mkpanel" class="glass"><div id="mkhead"><span class="grab"></span><button id="mktoggle" title="Abrir/fechar">☰</button><b>📍 Marcadores</b><span id="mkstatus"></span></div><div id="mkbody"></div></div>
 <div id="toast" class="glass"></div>
+<div id="streets" style="position:fixed;inset:0;pointer-events:none;overflow:hidden"></div>
+<div id="pins" style="position:fixed;inset:0;pointer-events:none;overflow:hidden"></div>
+<div id="placespanel" class="glass"></div>
+<div id="placecard" class="glass"></div>
 <div id="fps"></div>
 <div id="help" class="glass"><h3>Como usar</h3>
 <b>Mouse:</b> arraste com o botão esquerdo para mover o mapa, direito para girar/inclinar, rodinha para zoom. <b>Duplo clique</b> leva a câmera até o nível da rua.<br>
@@ -96,5 +127,5 @@ details summary{cursor:pointer;padding:6px 2px;color:#93c5fd;font-weight:600}
 <b>Marcadores:</b> no painel da direita crie uma categoria (cor + nome, ex.: verde = "ferreiro") e, se quiser, a quantidade máxima. Selecione a categoria, clique em <i>Colocar</i> e clique no mapa. Use <i>Mover</i> para arrastar. Clique num marcador para renomear, trocar de categoria, anotar ou apagar. Tudo fica salvo neste navegador; use <i>Exportar/Importar</i> para levar para outro aparelho.<br><br>
 <small>Dados: © OpenStreetMap (ODbL), Microsoft Global ML Building Footprints (ODbL), relevo SRTM/Terrarium (AWS Terrain Tiles). Textura do solo derivada de imagens de satélite Esri World Imagery (Esri, Maxar, Earthstar Geographics). O traçado do córrego foi estimado pelo relevo e pela mata ciliar vista no satélite. Cores de fachada e alturas das casas são aproximadas.</small><br><br><button onclick="document.getElementById('help').classList.remove('show')">Fechar</button></div>
 <div id="loading"><div class="spin"></div><h2>Aimorés 3D</h2><div id="loadmsg">Carregando dados…</div><div id="bar"><i></i></div></div>
-<script src="app.js?v=5.0.0-mwwv9yxa"></script>
+<script src="app.js?v=5.0.0-mwwvgkp7"></script>
 </body></html>

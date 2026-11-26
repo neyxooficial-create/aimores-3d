@@ -13,6 +13,8 @@ import { buildTrees } from './trees.js';
 import { buildRoads, asphaltTexture } from './roads.js';
 import { Traffic } from './traffic.js';
 import { buildRailLite } from './rail.js';
+import { Places } from './places.js';
+import { Streets } from './streets.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.has('shot');
@@ -331,6 +333,9 @@ async function main() {
     if (hit) flyTo(hit.point.clone().add(new THREE.Vector3(0, 1.6, 0)), 25, 1.45);
   });
 
+  const places = new Places({ places: city.places || [], T, buildings: city.buildings, root: $('pins'), panelBtn: $('placesbtn'), flyTo });
+  const streets = new Streets({ city, T, root: $('streets'), flyTo, places });
+
   const markers = new L.Markers({
     scene, camera, renderer, controls, labels, H: T, flyTo, panel: $('mkbody'),
     pickTargets: () => [ground, roads, buildings, church.group, viaduct.group],
@@ -344,6 +349,7 @@ async function main() {
   let labelsOn = true, labelsLow = false;
   toggle('t_labels', v => { labelsOn = v; labels.setGroupVisible('lbl nb', v && !labelsLow); labels.setGroupVisible('lbl poi', v); });
   toggle('t_limits', v => { limits.visible = v; });
+  toggle('t_streets', v => streets.setVisible(v));
   toggle('t_trees', v => { trees.visible = v; });
   toggle('t_shadows', v => { day.sun.castShadow = v && Q !== 'low'; });
   toggle('t_lamps', v => { lamps.visible = v; });
@@ -432,6 +438,8 @@ async function main() {
     const lowCam = camera.position.distanceTo(controls.target) < 140 && camera.position.y - gy < 60;
     if (lowCam !== labelsLow) { labelsLow = lowCam; if (labelsOn) labels.setGroupVisible('lbl nb', !lowCam); }
     labels.update(camera, innerWidth, innerHeight);
+    places.update(camera, innerWidth, innerHeight);
+    streets.update(camera, innerWidth, innerHeight, lowCam);
     // adaptive pixel ratio
     if (!SHOT) {
       if (dt > 0.045) { slowT += dt; fastT = 0; } else if (dt < 0.022) { fastT += dt; slowT = 0; }
@@ -445,7 +453,7 @@ async function main() {
   $('loading').classList.add('done');
   window.__ready = true;
   window.__app = {
-    THREE, scene, camera, controls, renderer, city, T, day, traffic, markers, goView, flyTo,
+    THREE, scene, camera, controls, renderer, city, T, day, traffic, markers, places, goView, flyTo,
     setTime: h => { day.setTime(h); shadowDirty = true; syncClock(); },
     setCam: (p, t) => { anim = null; controls.target.set(...t); camera.position.set(...p); controls.update(); },
     renderFrame: (n = 1) => { for (let i = 0; i < n; i++) { renderer.shadowMap.needsUpdate = true; frame(); } return true; },

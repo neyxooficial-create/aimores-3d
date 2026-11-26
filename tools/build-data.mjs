@@ -413,6 +413,92 @@ const creeks = [];
 }
 
 // ---------------------------------------------------------------------------------------------
+// Street names (Overture transportation segments = OpenStreetMap names), matched by proximity
+// ---------------------------------------------------------------------------------------------
+{
+  const f = path.join(SRC, 'overture_transportation_segment.json');
+  if (fs.existsSync(f)) {
+    const segs = JSON.parse(fs.readFileSync(f, 'utf8'));
+    const ng = new Grid(30);
+    let nNamed = 0;
+    for (const r of segs) {
+      const name = r.names && r.names.primary;
+      if (!name || r.subtype !== 'road') continue;
+      const pts = parseWkbLine(r.geometry).map(([lon, lat]) => [(lon - M.LON0) * M.KX, (M.LAT0 - lat) * M.KZ]);
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+        ng.addBox({ ax, az, bx, bz, name }, Math.min(ax, bx), Math.min(az, bz), Math.max(ax, bx), Math.max(az, bz));
+      }
+      nNamed++;
+    }
+    let matched = 0;
+    for (const r of C.roads) {
+      const votes = new Map();
+      for (let i = 0; i < r.p.length - 1; i++) {
+        const [ax, az] = r.p[i], [bx, bz] = r.p[i + 1];
+        const L = Math.hypot(bx - ax, bz - az);
+        for (let t = 0; t <= L; t += 5) {
+          const x = ax + (bx - ax) * t / (L || 1), z = az + (bz - az) * t / (L || 1);
+          let best = null, bd = 7;
+          for (const s of ng.query(x, z, 8)) { const q = segPointDist(x, z, s.ax, s.az, s.bx, s.bz); if (q.d < bd) { bd = q.d; best = s.name; } }
+          if (best) votes.set(best, (votes.get(best) || 0) + 1);
+        }
+      }
+      let top = null, tv = 0, total = 0;
+      for (const [k, v] of votes) { total += v; if (v > tv) { tv = v; top = k; } }
+      if (top && tv >= 2 && tv >= total * 0.4) { r.n = top; matched++; }
+    }
+    log('street names: overture named segments', nNamed, '-> roads named', matched, 'of', C.roads.length);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Comércios e serviços reais (Overture Maps places: Meta, Microsoft, Foursquare...)
+// ---------------------------------------------------------------------------------------------
+const PLACE_GROUPS = {
+  saude: ['pharmacy_and_drug_store', 'dental_clinic', 'diagnostics_imaging_or_lab_service', 'medical_service', 'behavioral_or_mental_health_clinic', 'surgery', 'hospital', 'clinic_or_treatment_center', 'doctor'],
+  alimentacao: ['restaurant', 'casual_eatery', 'bar', 'cafe', 'fast_food_restaurant', 'food_service', 'smoothie_juice_bar', 'food_and_beverage_store', 'bakery'],
+  lojas: ['fashion_and_apparel_store', 'hardware_home_and_garden_store', 'electronics_store', 'sporting_goods_store', 'flowers_and_gifts_store', 'department_store', 'shopping', 'vehicle_parts_store', 'personal_care_and_beauty_store', 'warehouse_club_store', 'arts_crafts_and_hobby_store', 'animal_and_pet_store', 'supplier_or_distributor'],
+  servicos: ['personal_or_beauty_service', 'professional_service', 'automotive_service', 'home_service', 'legal_service', 'attorney_or_law_firm', 'design_service', 'technical_service', 'printing_service', 'real_estate_service', 'travel_service', 'media_service', 'event_or_party_service', 'corporate_or_business_office', 'family_service', 'animal_or_pet_service', 'b2b_service', 'b2b_industrial_and_machine_service', 'b2b_transportation_and_storage_service', 'b2b_energy_and_utility_service', 'gym', 'radio_station', 'manufacturer'],
+  bancos: ['bank_or_credit_union', 'financial_service'],
+  igrejas: ['christian_place_of_worship', 'religious_organization'],
+  educacao: ['specialty_school', 'place_of_learning', 'elementary_school', 'college_university', 'education', 'educational_service'],
+  publico: ['government_office', 'police_station', 'courthouse', 'community_and_government', 'social_or_community_service', 'museum', 'historic_site', 'train_station', 'public_transit_facility_or_service', 'park', 'stadium_arena', 'sports_and_recreation', 'arts_and_entertainment'],
+  hospedagem: ['hotel'],
+  postos: ['gas_station'],
+};
+const groupOf = {};
+for (const [g, list] of Object.entries(PLACE_GROUPS)) for (const c of list) groupOf[c] = g;
+let places = [];
+if (fs.existsSync(path.join(SRC, 'overture_places_place.json'))) {
+  const raw = JSON.parse(fs.readFileSync(path.join(SRC, 'overture_places_place.json'), 'utf8'));
+  // points shared by 3+ places are geocoding fall-backs (town centroid), not real locations
+  const at = new Map();
+  for (const r of raw) { const k = r.bbox.xmin.toFixed(5) + ',' + r.bbox.ymin.toFixed(5); at.set(k, (at.get(k) || 0) + 1); }
+  const seen = [];
+  for (const r of raw) {
+    const k = r.bbox.xmin.toFixed(5) + ',' + r.bbox.ymin.toFixed(5);
+    if (at.get(k) >= 3) continue;
+    const conf = r.confidence || 0;
+    if (conf < 0.45) continue;
+    const name = r.names && r.names.primary ? r.names.primary.replace(/\s+/g, ' ').trim() : null;
+    if (!name) continue;
+    const cat = r.basic_category || (r.taxonomy && r.taxonomy.primary);
+    const g = groupOf[cat];
+    if (!g) continue;
+    const x = (r.bbox.xmin - M.LON0) * M.KX, z = (M.LAT0 - r.bbox.ymin) * M.KZ;
+    if (x < M.XMIN + 5 || x > M.XMAX - 5 || z < M.ZMIN + 5 || z > M.ZMAX - 5) continue;
+    if (seen.some(s => s.name.toLowerCase() === name.toLowerCase() && Math.hypot(s.x - x, s.z - z) < 40)) continue;
+    const a = r.addresses && r.addresses[0] && r.addresses[0].freeform ? r.addresses[0].freeform.replace(/\s+/g, ' ').replace(/, Aimorés.*$/i, '').trim() : '';
+    const tax = r.taxonomy && r.taxonomy.primary ? r.taxonomy.primary : cat;
+    const phone = r.phones && r.phones[0] ? r.phones[0] : '';
+    seen.push({ name, x, z });
+    places.push([name, round(x, 1), round(z, 1), g, tax, a, phone, round(conf, 2)]);
+  }
+  log('places', raw.length, '->', places.length, Object.fromEntries(Object.keys(PLACE_GROUPS).map(g => [g, places.filter(p => p[3] === g).length])));
+}
+
+// ---------------------------------------------------------------------------------------------
 // city.json
 // ---------------------------------------------------------------------------------------------
 const rp = a => a.map(([x, z]) => [round(x), round(z)]);
@@ -434,6 +520,7 @@ const city = {
   extras: C.extras,
   creek,
   creeks,
+  places,
 };
 fs.writeFileSync(path.join(OUT, 'city.json'), JSON.stringify(city));
 
