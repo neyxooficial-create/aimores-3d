@@ -489,6 +489,14 @@ async function main() {
   q.value = Q;
   q.onchange = () => { localStorage.setItem('aimores3d_q5', q.value); params.set('q', q.value); location.search = params.toString(); };
   const panel = $('mkpanel');
+  panel.classList.add('closed'); // starts collapsed: the map stays clear, open it with ☰
+  {
+    const top = $('top'), lay = $('layers'), mb = $('menubtn'), ob = $('optbtn');
+    const sync = () => { mb.classList.toggle('on', top.classList.contains('open')); ob.classList.toggle('on', lay.classList.contains('open')); };
+    mb.onclick = () => { top.classList.toggle('open'); if (top.classList.contains('open') && innerWidth <= 760) lay.classList.remove('open'); sync(); };
+    ob.onclick = () => { lay.classList.toggle('open'); if (lay.classList.contains('open') && innerWidth <= 760) top.classList.remove('open'); sync(); };
+    top.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => { top.classList.remove('open'); sync(); }));
+  }
   $('mkhead').onclick = () => panel.classList.toggle('closed');
   markers.onMode = m => { if (innerWidth <= 760 && m === 'place') { panel.classList.add('closed'); markers.toast('Toque no mapa para colocar o pino'); } };
   let oneFingerRotate = false;
@@ -500,7 +508,7 @@ async function main() {
   };
   setTouch();
   tm.onclick = () => { oneFingerRotate = !oneFingerRotate; setTouch(); };
-  $('layersbtn').onclick = () => { $('layers').classList.toggle('open'); $('layersbtn').classList.toggle('on'); };
+  $('layersbtn').onclick = () => { $('optbtn').click(); };
   if (isMobile) panel.classList.add('closed');
   $('helpbtn').onclick = () => $('help').classList.toggle('show');
   addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); wake(); });
