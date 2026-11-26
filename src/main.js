@@ -20,6 +20,7 @@ import { Trains } from './train.js';
 import { Sound } from './audio.js';
 import { Explore } from './explore.js';
 import { People } from './people.js';
+import { buildChurch as buildChurchV6, buildStation as buildStationV6, buildPraca as buildPracaV6 } from './landmarks.js';
 import { buildBumps, bumpField } from './bumps.js';
 
 const params = new URLSearchParams(location.search);
@@ -118,7 +119,18 @@ async function main() {
 
   await say('Igreja, praça e campos…');
   const church = L.buildChurch(city, T, scene);
-  const praca = L.buildPraca(city, T, scene);
+  // churches, praça and station rebuilt from the photo album (legacy builders only give the frame)
+  scene.remove(church.group);
+  const church6 = buildChurchV6(T, church.frame);
+  scene.add(church6.group);
+  church.group = church6.group;
+  const praca = buildPracaV6(city, T, day);
+  if (praca) {
+    scene.add(praca.group);
+    // no trees standing in the lake
+    city.trees = city.trees.filter(t => !praca.lake.some(([x, z]) => Math.hypot(t[0] - x, t[1] - z) < 5.5));
+    praca.palms = praca.palms.concat(church6.palms);
+  }
   L.buildFields(city, T, scene);
 
   await say('Casas, telhados e muros…');
@@ -130,7 +142,7 @@ async function main() {
     const dx = x - fr.C[0], dz = z - fr.C[1], f = dx * fr.f[0] + dz * fr.f[1], r = dx * fr.r[0] + dz * fr.r[1];
     return Math.abs(r) < fr.fx + 2 && f > fr.fz0 - 2 && f < fr.fz1 + 2;
   };
-  const buildings = buildBuildings(city, T, { skip: inChurch, quality: Q });
+  const buildings = buildBuildings(city, T, { skip: b => inChurch(b) || /Esta(ç|c)ão Aimor/i.test(b.osm || ''), quality: Q });
   scene.add(buildings);
   console.log('buildings', JSON.stringify(buildings.userData.stats));
   {
@@ -163,7 +175,7 @@ async function main() {
   const viaduct = L.buildViaductVale(city, T, scene, rail.paths);
   const viaduct2 = L.buildViaductCentro(city, T, scene, rail.paths);
   L.buildClub(city, T, scene);
-  L.buildStation(city, T, scene);
+  { const st = buildStationV6(city, T, city.rail[0].pts); if (st) scene.add(st); }
   L.buildLote(city, T, scene);
   L.buildFootbridges(city, T, scene, city.viaduct.railtop);
 
@@ -248,17 +260,8 @@ async function main() {
   const elevatedIds = new Set([...viadIds, 1314627853, 1314627854, 1314627855]);
   const elevated = city.roads.filter(r => elevatedIds.has(r.id)).map(road => ({ road, heightAt: (rd, x, z) => roadH(rd, x, z) }));
   const lampList = placeLamps(city, T, { skipIds: elevatedIds, elevated });
-  // the praça has its own decorative posts: add their light (no new poles)
-  const plazaLights = [];
-  {
-    const poly = city.extras.park || [];
-    if (poly.length) {
-      let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
-      for (const [x, z] of poly) { x0 = Math.min(x0, x); z0 = Math.min(z0, z); x1 = Math.max(x1, x); z1 = Math.max(z1, z); }
-      const inside = (x, z) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { if ((poly[i][1] > z) !== (poly[j][1] > z) && x < (poly[j][0] - poly[i][0]) * (z - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) c = !c; } return c; };
-      for (let x = x0 + 6; x < x1; x += 13) for (let z = z0 + 6; z < z1; z += 13) if (inside(x, z)) plazaLights.push({ x, z, ax: 0, az: 0, led: true });
-    }
-  }
+  // the praça has its own globe lamps: add their light (no new poles)
+  const plazaLights = (praca && praca.lamps ? praca.lamps : []).map(([x, z]) => ({ x, z, ax: 0, az: 0, led: false }));
   // floodlights on the church façade
   if (church && church.center) {
     const [cx, cz] = church.center, f = church.front || [0, 1];
