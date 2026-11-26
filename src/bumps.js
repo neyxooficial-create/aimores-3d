@@ -74,15 +74,20 @@ export function buildBumps(bumps, T, roadLift = 0.1) {
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x8e9296, metalness: 0.5, roughness: 0.4 });
   const poleGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.4, 6); poleGeo.translate(0, 1.2, 0);
   const plate = new THREE.PlaneGeometry(0.75, 0.75);
+  const n = bumps.length * 2;
+  const poles = new THREE.InstancedMesh(poleGeo, poleMat, n), plates = new THREE.InstancedMesh(plate, signMat, n);
+  const M = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0);
+  let k = 0;
   for (const [bx, bz, ux, uz, hw] of bumps) {
     for (const d of [-1, 1]) {
       const vx = -uz, vz = ux;
       const px = bx + ux * 22 * d + vx * (hw + 0.9) * -d, pz = bz + uz * 22 * d + vz * (hw + 0.9) * -d;
       const y = T.at(px, pz);
-      const pole = new THREE.Mesh(poleGeo, poleMat); pole.position.set(px, y, pz); g.add(pole);
-      const pl = new THREE.Mesh(plate, signMat); pl.position.set(px, y + 2.1, pz);
-      pl.rotation.y = Math.atan2(ux * d, uz * d); g.add(pl);
+      M.makeTranslation(px, y, pz); poles.setMatrixAt(k, M);
+      q.setFromAxisAngle(up, Math.atan2(ux * d, uz * d)); v.set(px, y + 2.1, pz); M.compose(v, q, one); plates.setMatrixAt(k, M);
+      k++;
     }
   }
+  g.add(poles, plates);
   return g;
 }

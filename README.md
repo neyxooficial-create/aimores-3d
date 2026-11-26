@@ -18,6 +18,19 @@ Site: abra `index.html` por um servidor (GitHub Pages). Não funciona abrindo o 
 - **Árvores** por espécie (mangueira, oiti, coqueiro, palmeira, ipê, flamboyant, eucalipto, mata).
 - **Viadutos** com asfalto novo e postes.
 
+## Novidades da v6
+
+![v6](docs/v6-novidades.jpg)
+
+- **🚶 Passeio a pé e 🚗 Dirigir**: andar pela cidade em primeira pessoa (com colisão em casas e muros) ou dirigir um carro (freio de mão, buzina, faróis, 3 câmeras, motor, quebra-molas sentidos na suspensão).
+- **Trem da Vale com horário**: passageiros às 10h29 (sentido BH) e ~16h59 (sentido Vitória), parando na estação; minério e carga ao longo do dia. Cancelas na Rua Antônio Polastri descem, o sinal toca, os carros esperam; buzina e barulho das rodas.
+- **Comércios reais** (aba 🏪): 182 estabelecimentos (Overture Maps) com categoria, endereço e telefone; letreiros com os nomes reais nas fachadas; busca de ruas e lugares; nomes das ruas em placas.
+- **Casas variadas**: atlas de fachadas, estilos (simples, padrão, moderna com platibanda, antiga, comércio, galpão), varandas, sacadas, garagens, caixas d'água, toldos.
+- **Igreja Matriz, estação e Praça João Pinheiro** refeitas pelas fotos.
+- **Córrego da Natividade** (OSM/ANA) e canal do Triângulo; relevo corrigido com Copernicus GLO-30.
+- **Pedestres** nas calçadas movimentadas, conforme a hora; **tempo** (sol, nublado, chuva, neblina); **sons** sintetizados.
+- **Quebra-molas** padrão CONTRAN em frente a escolas, igrejas, hospital e clínicas (posição aproximada — ajuste em `source/quebra_molas.json`).
+
 ## Estrutura
 
 | Pasta / arquivo | O que é |
@@ -37,6 +50,8 @@ npm run data     # source/ -> data/  (alinha casas, processa córrego, água, te
 npm run build    # src/ -> app.js + index.html
 ```
 
+`python3 tools/fetch-overture.py places/place base/water transportation/segment` baixa comércios, córregos e nomes de ruas (Overture Maps); `python3 tools/terrain-merge.py` aplica o relevo Copernicus (`source/copernicus_utm24s_30m.tif`).
+
 `python3 tools/creek-trace.py` refaz a análise de drenagem que encontrou o córrego (gera `source/creek_raw.json`); o ajuste manual do trecho do Triângulo fica em `source/creek_fix.json`.
 
-Parâmetros de URL úteis: `?q=low|medium|high|ultra` (qualidade), `?h=19.5` (horário), `?view=corrego`, `?fps` (mostra FPS).
+Parâmetros de URL úteis: `?q=low|medium|high|ultra` (qualidade), `?h=19.5` (horário), `?tempo=chuva|neblina|nublado|sol`, `?view=corrego|canal|praca|igreja|viadutocentro`, `?fps` (mostra FPS).

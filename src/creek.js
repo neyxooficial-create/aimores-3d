@@ -148,7 +148,7 @@ function buildOneCreek(C, T, day, Q) {
         }
       }
       // scatter stones in the bed and grass on the banks
-      if (R() < 0.9) {
+      if (R() < (Q === 'low' ? 0.25 : 0.9)) {
         const o = (R() - 0.5) * a.w * 1.1;
         stones.push([a.x + a.nx * o, a.ws - 0.15 + R() * 0.12, a.z + a.nz * o, 0.12 + R() * 0.28 + a.slope * 2, R()]);
       }

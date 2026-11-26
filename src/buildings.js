@@ -192,7 +192,7 @@ export function buildBuildings(city, T, opts = {}) {
           const col = style === 'shop' && f === 0 && isFront ? paint2 : paint;
           wallQ(fac, ax, az, bx, bz, ya, yb, ya, yb, tileUV(t), col);
           // barrado (painted base band) on plain / window bays of the ground floor
-          if (f === 0 && hasBarrado && ![TILE.DOOR_WOOD, TILE.DOOR_METAL, TILE.GARAGE, TILE.DOOR_GARAGE_WOOD, TILE.SHOP_OPEN, TILE.SHOP_CLOSED, TILE.SHOP_GLASS, TILE.SHOP_BAR, TILE.COL_DOOR, TILE.BRICK, TILE.BLOCK].includes(t)) {
+          if (Q !== 'low' && f === 0 && hasBarrado && ![TILE.DOOR_WOOD, TILE.DOOR_METAL, TILE.GARAGE, TILE.DOOR_GARAGE_WOOD, TILE.SHOP_OPEN, TILE.SHOP_CLOSED, TILE.SHOP_GLASS, TILE.SHOP_BAR, TILE.COL_DOOR, TILE.BRICK, TILE.BLOCK].includes(t)) {
             const o = 0.012;
             wallQ(trim, ax + nx * o, az + nz * o, bx + nx * o, bz + nz * o, ya, ya + 0.55, ya, ya + 0.55, null, barr);
           }
@@ -200,7 +200,7 @@ export function buildBuildings(city, T, opts = {}) {
           if (t === TILE.UP_BALCONY) {
             const d = 1.0, sx = (ax + bx) / 2 + nx * d / 2, sz = (az + bz) / 2 + nz * d / 2, yaw = Math.atan2(bz - az, bx - ax);
             boxT(sx, ya - 0.12, sz, bw * 0.95, 0.12, d, yaw, WHITE);
-            const rail = h1 < 0.5;
+            const rail = h1 < 0.5 || Q === 'low';
             const ex = (ax + bx) / 2 + nx * d, ez = (az + bz) / 2 + nz * d;
             if (rail) wallQ(glassB, ex - (bx - ax) / 2 * 0.95, ez - (bz - az) / 2 * 0.95, ex + (bx - ax) / 2 * 0.95, ez + (bz - az) / 2 * 0.95, ya, ya + 1.05, ya, ya + 1.05, null, srgb(70, 95, 105));
             else for (let s = 0; s <= 8; s++) { const t2 = s / 8 - 0.5; boxT(ex + (bx - ax) * t2 * 0.95, ya, ez + (bz - az) * t2 * 0.95, 0.04, 1.0, 0.04, yaw, DARK); }
@@ -323,7 +323,7 @@ export function buildBuildings(city, T, opts = {}) {
         fac.tri(R(-a, -b, eave), R(-a, b, eave), R(-a, 0, gy), b0, b1, b2, paint);
         fac.tri(R(a, b, eave), R(a, -b, eave), R(a, 0, gy), b0, b1, b2, paint);
         // ridge cap
-        if (rm === 'ceramic') { const yaw = Math.atan2(uz, ux); boxT(cx, ridge - 0.06, cz, 2 * A_, 0.14, 0.32, yaw, roofCol.map(v => v * 0.8), trim); }
+        if (rm === 'ceramic' && Q !== 'low') { const yaw = Math.atan2(uz, ux); boxT(cx, ridge - 0.06, cz, 2 * A_, 0.14, 0.32, yaw, roofCol.map(v => v * 0.8), trim); }
       } else {
         const r = Math.max(0, A_ - B_);
         const sl = Math.hypot(B_, ridge - eave);
@@ -331,13 +331,13 @@ export function buildBuildings(city, T, opts = {}) {
         rb.quad(R(A_, B_, eave), R(-A_, B_, eave), R(-r, 0, ridge), R(r, 0, ridge), [0, 0], [2 * A_ / tu, 0], [(A_ + r) / tu, sl / tu], [(A_ - r) / tu, sl / tu], roofCol);
         rb.tri(R(-A_, B_, eave), R(-A_, -B_, eave), R(-r, 0, ridge), [0, 0], [2 * B_ / tu, 0], [B_ / tu, sl / tu], roofCol);
         rb.tri(R(A_, -B_, eave), R(A_, B_, eave), R(r, 0, ridge), [0, 0], [2 * B_ / tu, 0], [B_ / tu, sl / tu], roofCol);
-        if (rm === 'ceramic' && r > 0.2) { const yaw = Math.atan2(uz, ux); boxT(cx, ridge - 0.06, cz, 2 * r, 0.14, 0.3, yaw, roofCol.map(v => v * 0.8), trim); }
+        if (rm === 'ceramic' && r > 0.2 && Q !== 'low') { const yaw = Math.atan2(uz, ux); boxT(cx, ridge - 0.06, cz, 2 * r, 0.14, 0.3, yaw, roofCol.map(v => v * 0.8), trim); }
       }
       // soffit (forro do beiral) seen from the street
       const so = [R(-A_, -B_, eave - 0.02), R(A_, -B_, eave - 0.02), R(A_, B_, eave - 0.02), R(-A_, B_, eave - 0.02)];
       const si = [R(-a, -b, eave - 0.02), R(a, -b, eave - 0.02), R(a, b, eave - 0.02), R(-a, b, eave - 0.02)];
       const soff = rm === 'ceramic' ? srgb(120, 80, 55) : srgb(200, 200, 196);
-      for (let k = 0; k < 4; k++) trim.quad(so[k], si[k], si[(k + 1) % 4], so[(k + 1) % 4], null, null, null, null, soff, [0, -1, 0]);
+      if (Q !== 'low') for (let k = 0; k < 4; k++) trim.quad(so[k], si[k], si[(k + 1) % 4], so[(k + 1) % 4], null, null, null, null, soff, [0, -1, 0]);
       // fascia (white board along the eave)
       if (rm === 'ceramic' && h4 < 0.5) for (let k = 0; k < 4; k++) { const p = so[k], q = so[(k + 1) % 4]; trim.quad([p[0], eave - 0.2, p[2]], [q[0], eave - 0.2, q[2]], [q[0], eave + 0.02, q[2]], [p[0], eave + 0.02, p[2]], null, null, null, null, WHITE); }
     }
@@ -361,7 +361,7 @@ export function buildBuildings(city, T, opts = {}) {
       solar.quad(c[0], c[3], c[2], c[1], [0, 0], [0, pd], [pw, pd], [pw, 0], null, [0, 1, 0]);
       void yaw;
     }
-    if (h4 > 0.9 && style !== 'antiga') { // parabolic dish
+    if (Q !== 'low' && h4 > 0.9 && style !== 'antiga') { // parabolic dish
       const dx = cx - ux * a * 0.4, dz = cz - uz * a * 0.4;
       cyl(dx, roofTopY - 0.2, dz, 0.04, 0.6, DARK, 4);
       const c0 = [dx, roofTopY + 0.6, dz];

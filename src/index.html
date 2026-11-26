@@ -60,7 +60,7 @@ details summary{cursor:pointer;padding:6px 2px;color:#93c5fd;font-weight:600}
  .mob{display:inline-block}
  #top{left:8px;right:8px;top:8px;padding:8px 10px;max-width:none}#top h1{font-size:15px;margin-bottom:6px}#top .sub{display:none}
  .views{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}.views::-webkit-scrollbar{display:none}
- .views button{flex:none;min-height:40px;font-size:14px;padding:8px 12px}
+ .views button{flex:none;min-height:40px;font-size:14px;padding:8px 12px}.views button.hot{order:-2}
  #layers{display:none;left:8px;right:8px;top:100px;bottom:auto;max-width:none;font-size:14px;gap:12px 16px}#layers.open{display:flex}
  #layers input[type=checkbox]{width:20px;height:20px}#layers select{font-size:15px;padding:6px}
  #clock .ic{min-height:40px;min-width:40px}
@@ -147,10 +147,14 @@ body:not(.exploring) .driveonly,body:not(.exploring) .walkonly{display:none}
 <div id="fps"></div>
 <div id="help" class="glass"><h3>Como usar</h3>
 <b>Mouse:</b> arraste com o botão esquerdo para mover o mapa, direito para girar/inclinar, rodinha para zoom. <b>Duplo clique</b> leva a câmera até o nível da rua.<br>
-<b>Celular:</b> 1 dedo arrasta o mapa (ou gira, se você trocar no botão “1 dedo”), 2 dedos fazem pinça para zoom e giram/inclinam. Em <i>⚙ Opções</i> dá para mudar a qualidade e o horário.<br><br>
-<b>Horário:</b> o relógio começa no horário de Brasília. Use a barra para escolher a hora ou ▶ para o tempo passar. Ao anoitecer (por volta das 18h) os postes acendem, as janelas e os faróis dos carros ligam; de manhã (por volta das 5h30) os postes apagam.<br><br>
-<b>Marcadores:</b> no painel da direita crie uma categoria (cor + nome, ex.: verde = "ferreiro") e, se quiser, a quantidade máxima. Selecione a categoria, clique em <i>Colocar</i> e clique no mapa. Use <i>Mover</i> para arrastar. Clique num marcador para renomear, trocar de categoria, anotar ou apagar. Tudo fica salvo neste navegador; use <i>Exportar/Importar</i> para levar para outro aparelho.<br><br>
-<small>Dados: © OpenStreetMap (ODbL), Microsoft Global ML Building Footprints (ODbL), relevo SRTM/Terrarium (AWS Terrain Tiles). Textura do solo derivada de imagens de satélite Esri World Imagery (Esri, Maxar, Earthstar Geographics). O traçado do córrego foi estimado pelo relevo e pela mata ciliar vista no satélite. Cores de fachada e alturas das casas são aproximadas.</small><br><br><button onclick="document.getElementById('help').classList.remove('show')">Fechar</button></div>
+<b>Celular:</b> 1 dedo arrasta o mapa (ou gira, se você trocar no botão “1 dedo”), 2 dedos fazem pinça para zoom e giram/inclinam. Em <i>⚙ Opções</i> ficam qualidade, horário, tempo, comércios e som.<br><br>
+<b>🚶 Passeio a pé:</b> W A S D ou setas para andar, Shift para correr, arraste o mouse para olhar (ou clique para travar o mouse). No celular, joystick à esquerda e arraste à direita para olhar.<br>
+<b>🚗 Dirigir:</b> W/↑ acelera, S/↓ freia e dá ré, A D / ← → viram, Espaço é o freio de mão, H buzina, C troca a câmera, L liga os faróis. Esc sai.<br><br>
+<b>Horário:</b> o relógio começa no horário de Brasília. Use a barra ou ▶ para o tempo passar. Ao anoitecer os postes acendem, e janelas, faróis e a praça também. De manhã os postes apagam.<br>
+<b>Trem:</b> o trem de passageiros passa em Aimorés às 10h29 (sentido Belo Horizonte) e por volta de 16h59 (sentido Vitória), e para na estação. Trens de minério e de carga passam ao longo do dia. As cancelas da Rua Antônio Polastri descem, o sinal toca e os carros esperam. Ligue o 🔊 Som para ouvir.<br>
+<b>Comércios:</b> o botão 🏪 mostra onde ficam lojas, farmácias, clínicas, bancos, igrejas, escolas etc. A busca no topo encontra ruas e lugares.<br><br>
+<b>Marcadores:</b> no painel da direita crie uma categoria (cor + nome) e coloque pinos no mapa. Tudo fica salvo neste navegador; use <i>Exportar/Importar</i> para levar para outro aparelho.<br><br>
+<small>Dados: © OpenStreetMap (ODbL), Microsoft Global ML Building Footprints (ODbL), relevo SRTM/Terrarium (AWS Terrain Tiles). Textura do solo derivada de imagens de satélite Esri World Imagery (Esri, Maxar, Earthstar Geographics). Córrego da Natividade: OpenStreetMap e mapa da ANA. Relevo corrigido com Copernicus GLO-30 (© European Union). Comércios: Overture Maps (ODbL/CDLA). Os horários dos trens de carga e a posição dos quebra-molas são aproximados. Cores de fachada e alturas das casas são aproximadas.</small><br><br><button onclick="document.getElementById('help').classList.remove('show')">Fechar</button></div>
 <div id="loading"><div class="spin"></div><h2>Aimorés 3D</h2><div id="loadmsg">Carregando dados…</div><div id="bar"><i></i></div></div>
 <script src="app.js?v=__VERSION__"></script>
 </body></html>
