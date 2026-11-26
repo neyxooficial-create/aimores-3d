@@ -9,7 +9,7 @@ Site: abra `index.html` por um servidor (GitHub Pages). Não funciona abrindo o 
 ## O que tem na v5
 
 - **Mais leve**: download de ~5,5 MB (v4) para ~2,8 MB na qualidade Alta e ~2 MB na Leve; cena com ~1,4 milhão de triângulos na Alta (v4: 3–4 milhões) e ~0,7 milhão na Leve.
-- **Casas alinhadas**: cantos retos, paralelas à rua, recuo uniforme em cada quadra, sem casas sobrepostas.
+- **Casas**: cantos retos sem girar a casa (cada uma fica na posição e no ângulo da foto de satélite), nada invadindo rua, trilho ou córrego, sem casas sobrepostas.
 - **Ruas**: paralelepípedo de granito, asfalto, terra, calçadas, meio-fio, faixas pintadas e faixas de pedestre no Centro.
 - **Trânsito**: hatch, sedã, SUV, picape, moto, ônibus e caminhão, na mão direita, com carros estacionados; faróis à noite.
 - **Dia e noite**: sol e lua na posição real para Aimorés, estrelas; relógio no horário de Brasília. Os **postes acendem ao anoitecer** e apagam de manhã, janelas acendem à noite.
@@ -28,8 +28,20 @@ Site: abra `index.html` por um servidor (GitHub Pages). Não funciona abrindo o 
 - **Casas variadas**: atlas de fachadas, estilos (simples, padrão, moderna com platibanda, antiga, comércio, galpão), varandas, sacadas, garagens, caixas d'água, toldos.
 - **Igreja Matriz, estação e Praça João Pinheiro** refeitas pelas fotos.
 - **Córrego da Natividade** (OSM/ANA) e canal do Triângulo; relevo corrigido com Copernicus GLO-30.
-- **Pedestres** nas calçadas movimentadas, conforme a hora; **tempo** (sol, nublado, chuva, neblina); **sons** sintetizados.
+- **Tempo** (sol, nublado, chuva, neblina); **sons** sintetizados.
 - **Quebra-molas** padrão CONTRAN em frente a escolas, igrejas, hospital e clínicas (posição aproximada — ajuste em `source/quebra_molas.json`).
+
+## Novidades da v6.1 (revisão casa por casa, rua por rua)
+
+- **Casas consertadas**: nenhuma casa girada pelo alinhamento automático nem passando no meio da rua (eram 291 invadindo a pista); sobreposições separadas. Conferência automática em `tools/audit-buildings.mjs`.
+- **Telhados**: casas em L/T/U com uma água por ala, casas com a esquina cortada pela rua com telhado inclinado próprio, galpões com telhado metálico baixo atrás da platibanda (antes o telhado retangular "sobrava" para fora). Menos caixas d'água à vista em telhado de telha.
+- **Ruas**: nenhuma rua da cidade de terra — todas de paralelepípedo (ou asfalto), com meio-fio e calçada; o loteamento também. Faixas pintadas param nos cruzamentos.
+- **Rotatória redonda** no começo da Rua Triângulo (antes era um triângulo de ruas).
+- **Igreja Matriz** na planta real (estava ~20 m para a rua, com a grade dentro da pista, e com as paredes "do avesso"), adro com gradil branco, portão e jardim redondo; **pracinha triangular** em frente com o **monumento do santo**.
+- **Viaduto do Centro**: fechado o buraco no pé da rampa (perto da capela).
+- **Trânsito**: os carros não piscam/teleportam mais — fazem curvas suaves nas esquinas e nas dobras das ruas, não ficam presos em becos; bem menos carros. **Pedestres removidos** (pesavam).
+- **Ultra mais leve**: a sombra é recalculada só quando a vista ou o sol mudam (carros e trem têm sombra de contato), árvores detalhadas num raio menor.
+- **Cemitério São João** refeito: jazigos variados, cruzes, capelinhas, aleias com árvores e muro.
 
 ## Estrutura
 
