@@ -39,33 +39,30 @@ function resample(p, step) {
 }
 
 /**
- * @param raw     [[x,z,h,acc]] upstream->mouth
+ * @param raw     [[x,z,h,acc]] upstream->mouth   (acc only sets the relative width)
  * @param ctx     { meta, height(Uint16 grid, mutated), roads, rail, buildings, at(x,z) }
+ * @param opts    { name, wMin, wMax, toRiver (extend into the river), smooth (chaikin passes),
+ *                  displace (move off parallel streets), joinLevel (water level at the mouth) }
  */
-export function buildCreek(raw, ctx) {
+export function buildCreek(raw, ctx, opts = {}) {
   const { meta, roads, rail, buildings } = ctx;
   const WL = meta.WL;
-  // headwater gully south of BR-259 (seen on the imagery as an erosion ravine)
-  const gully = [[-1016, 706, 0, 300], [-1013, 668, 0, 380], [-1009, 632, 0, 460], [-1002, 603, 0, 560], [-988, 580, 0, 700], [-972, 563, 0, 900]];
-  let pts = gully.concat(raw.slice(64));
-  // curated detour (see source/creek_fix.json)
-  if (ctx.fix) {
-    const near = q => pts.reduce((bi, p, i) => (Math.hypot(p[0] - q[0], p[1] - q[1]) < Math.hypot(pts[bi][0] - q[0], pts[bi][1] - q[1]) ? i : bi), 0);
-    const i0 = near(ctx.fix.replace[0]), i1 = near(ctx.fix.replace[1]);
-    const a0 = pts[i0][3], a1 = pts[i1][3];
-    const via = ctx.fix.via.map(([x, z], k, arr) => [x, z, 0, a0 + (a1 - a0) * k / (arr.length - 1)]);
-    pts = pts.slice(0, i0).concat(via, pts.slice(i1 + 1));
+  const wMin = opts.wMin ?? 1.1, wMax = opts.wMax ?? 4.0;
+  let pts = raw.slice();
+  if (opts.toRiver) {
+    // stop shortly after reaching the river, then run 10 m into it
+    let end = pts.findIndex((p, i) => i > 20 && p[2] && p[2] <= WL + 0.35);
+    if (end < 0) end = pts.length - 1;
+    pts = pts.slice(0, end + 1);
+    const last = pts[pts.length - 1], prev = pts[Math.max(0, pts.length - 4)];
+    const dx = last[0] - prev[0], dz = last[1] - prev[1], L = Math.hypot(dx, dz) || 1;
+    pts.push([last[0] + dx / L * 10, last[1] + dz / L * 10, WL - 1, last[3]]);
   }
-  // stop shortly after reaching the river
-  let end = pts.findIndex((p, i) => i > 20 && p[2] && p[2] <= WL + 0.35);
-  if (end < 0) end = pts.length - 1;
-  pts = pts.slice(0, end + 1);
-  const last = pts[pts.length - 1], prev = pts[pts.length - 4];
-  const dx = last[0] - prev[0], dz = last[1] - prev[1], L = Math.hypot(dx, dz) || 1;
-  pts.push([last[0] + dx / L * 10, last[1] + dz / L * 10, WL - 1, last[3]]);
+  // keep only the part inside the map (plus a small margin)
+  pts = pts.filter(p => p[0] > meta.XMIN + 6 && p[0] < meta.XMAX - 6 && p[1] > meta.ZMIN + 6 && p[1] < meta.ZMAX - 6);
 
   // smooth the D8 staircase, keep accumulation for width
-  let P = chaikin(pts.map(p => [p[0], p[1], Math.log(Math.max(p[3], 200))]), 4);
+  let P = chaikin(pts.map(p => [p[0], p[1], Math.log(Math.max(p[3], 200))]), opts.smooth ?? 4);
   P = resample(P, 2.0);
 
   // --- classify each sample: 0 open (natural), 1 concrete canal, 2 culvert (hidden) -------------
@@ -104,11 +101,11 @@ export function buildCreek(raw, ctx) {
     }
     return d;
   };
-  for (let iter = 0; iter < 4; iter++) {
+  for (let iter = 0; iter < (opts.displace === false ? 0 : 4); iter++) {
     const Q = P.map(p => p.slice());
     for (let i = 1; i < P.length - 1; i++) {
       const [x, z, la] = P[i];
-      const w = 1.1 + 2.9 * Math.sqrt(Math.min(1, Math.exp(la) / accMax));
+      const w = wMin + (wMax - wMin) * Math.sqrt(Math.min(1, Math.exp(la) / accMax));
       let tx = P[i + 1][0] - P[i - 1][0], tz = P[i + 1][1] - P[i - 1][1];
       const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
       let best = null;
@@ -141,7 +138,7 @@ export function buildCreek(raw, ctx) {
 
   const S = P.map(([x, z, la]) => {
     const acc = Math.exp(la);
-    const w = 1.1 + 2.9 * Math.sqrt(Math.min(1, acc / accMax)); // water width (m)
+    const w = wMin + (wMax - wMin) * Math.sqrt(Math.min(1, acc / accMax)); // water width (m)
     let roadD = 1e9, railD = 1e9, bldD = 1e9, crossing = null;
     for (const it of g.query(x, z, 16)) {
       if (it.k === 'bld') {
@@ -192,7 +189,7 @@ export function buildCreek(raw, ctx) {
   for (let it = 0; it < 6; it++) {
     for (let i = 1; i < S.length - 1; i++) S[i].ws = Math.min(S[i - 1].ws, (S[i - 1].ws + 2 * S[i].ws + S[i + 1].ws) / 4);
   }
-  for (const s of S) s.ws = Math.max(s.ws, WL - 0.05);
+  for (const s of S) s.ws = Math.max(s.ws, WL - 0.05, opts.joinLevel ?? -1e9);
 
   // --- carve the valley into the height grid ----------------------------------------------------
   const { GW, GH, G, XMIN, ZMIN, HB } = meta;
@@ -231,5 +228,5 @@ export function buildCreek(raw, ctx) {
 
   const out = S.map(s => [Math.round(s.x * 100) / 100, Math.round(s.z * 100) / 100, Math.round(s.ws * 100) / 100, Math.round(s.w * 100) / 100, s.mode]);
   const stats = { samples: S.length, open: S.filter(s => s.mode === 0).length, canal: S.filter(s => s.mode === 1).length, culvert: S.filter(s => s.mode === 2).length, carved, fall: (S[0].ws - S[S.length - 1].ws).toFixed(1) };
-  return { creek: { pts: out, mouth: [S[S.length - 1].x, S[S.length - 1].z] }, stats };
+  return { creek: { name: opts.name || 'Córrego', pts: out, mouth: [S[S.length - 1].x, S[S.length - 1].z] }, stats };
 }

@@ -119,7 +119,7 @@ export function placeLamps(city, T, opts = {}) {
   };
   const near = new SpatialGrid(20);
   const tooClose = (x, z, d) => { for (const q of near.query(x, z, d)) if (Math.hypot(q.x - x, q.z - z) < d) return true; return false; };
-  const creek = city.creek ? city.creek.pts : [];
+  const creek = (city.creeks || (city.creek ? [city.creek] : [])).flatMap(c => c.pts);
   const inCreek = (x, z) => creek.some(p => p[4] !== 2 && Math.abs(p[0] - x) < 6 && Math.abs(p[1] - z) < 6 && Math.hypot(p[0] - x, p[1] - z) < p[3] / 2 + 1.5);
   const lamps = [];
   const R = rng(4242);

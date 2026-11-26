@@ -19,6 +19,19 @@ import {
 } from './geom.mjs';
 
 const SRC = 'source', OUT = 'data';
+
+/** Minimal WKB (hex) LineString parser -> [[lon, lat], ...] */
+function parseWkbLine(hex) {
+  const b = Buffer.from(hex, 'hex');
+  const le = b[0] === 1;
+  const u32 = o => (le ? b.readUInt32LE(o) : b.readUInt32BE(o));
+  const f64 = o => (le ? b.readDoubleLE(o) : b.readDoubleBE(o));
+  const type = u32(1) % 1000;
+  if (type !== 2) return [];
+  const n = u32(5), out = [];
+  for (let i = 0; i < n; i++) out.push([f64(9 + i * 16), f64(17 + i * 16)]);
+  return out;
+}
 const DEG = Math.PI / 180;
 fs.mkdirSync(OUT, { recursive: true });
 const C = JSON.parse(fs.readFileSync(path.join(SRC, 'city.json'), 'utf8'));
@@ -325,7 +338,7 @@ log('tree species', sp);
 // ---------------------------------------------------------------------------------------------
 // Córrego (creek): smooth, classify, carve into the height grid
 // ---------------------------------------------------------------------------------------------
-const hbuf0 = fs.readFileSync(path.join(SRC, 'height.u16'));
+const hbuf0 = fs.readFileSync(path.join(SRC, fs.existsSync(path.join(SRC, 'height_v6.u16')) ? 'height_v6.u16' : 'height.u16'));
 const heightU16 = new Uint16Array(hbuf0.buffer.slice(hbuf0.byteOffset, hbuf0.byteOffset + hbuf0.byteLength));
 const heightOrig = heightU16.slice();
 const M = C.meta;
@@ -337,28 +350,66 @@ const hAt = (x, z) => {
   return (g(r, c) * (1 - u) + g(r, c + 1) * u) * (1 - v) + (g(r + 1, c) * (1 - u) + g(r + 1, c + 1) * u) * v;
 };
 let creek = null;
-if (fs.existsSync(path.join(SRC, 'creek_raw.json'))) {
-  const raw = JSON.parse(fs.readFileSync(path.join(SRC, 'creek_raw.json'), 'utf8'));
-  const fixFile = path.join(SRC, 'creek_fix.json');
-  const fix = fs.existsSync(fixFile) ? JSON.parse(fs.readFileSync(fixFile, 'utf8')) : null;
-  const res = buildCreek(raw, { meta: M, height: heightU16, roads: C.roads, rail: C.rail, buildings, at: hAt, fix });
-  creek = res.creek;
-  log('creek', res.stats);
-  // clear trees standing in the water / on the canal walls
-  const cp = creek.pts;
-  const tg = new Grid(20);
-  for (let i = 0; i < cp.length - 1; i++) tg.addBox(i, Math.min(cp[i][0], cp[i + 1][0]), Math.min(cp[i][1], cp[i + 1][1]), Math.max(cp[i][0], cp[i + 1][0]), Math.max(cp[i][1], cp[i + 1][1]));
+const creeks = [];
+{
+  // ---- 1) Córrego da Natividade + afluente, from OpenStreetMap (via Overture base/water)
+  const LAT0 = M.LAT0, LON0 = M.LON0;
+  const toXZ = ([lon, lat]) => [(lon - LON0) * M.KX, (LAT0 - lat) * M.KZ];
+  const water = fs.existsSync(path.join(SRC, 'overture_base_water.json')) ? JSON.parse(fs.readFileSync(path.join(SRC, 'overture_base_water.json'), 'utf8')) : [];
+  const byId = new Map();
+  for (const r of water) {
+    if (r.subtype !== 'stream') continue;
+    const id = r.sources && r.sources[0] && r.sources[0].record_id.split('@')[0];
+    byId.set(id, parseWkbLine(r.geometry).map(toXZ));
+  }
+  const chain = ids => { let out = []; for (const id of ids) { const p = byId.get(id); if (!p) return null; out = out.concat(out.length ? p.slice(1) : p); } return out; };
+  const withAcc = (p, a0, a1) => { let L = 0; const d = [0]; for (let i = 1; i < p.length; i++) { L += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); d.push(L); } return p.map(([x, z], i) => [x, z, 0, a0 + (a1 - a0) * d[i] / (L || 1)]); };
+  const mainLine = chain(['w804841580', 'w477588522', 'w804841523']);
+  const tribLine = chain(['w804841550', 'w804841575']);
+  const ctxBase = { meta: M, height: heightU16, roads: C.roads, rail: C.rail, buildings, at: hAt };
+  let mainCreek = null;
+  if (mainLine) {
+    const res = buildCreek(withAcc(mainLine, 2000, 9000), ctxBase, { name: 'Córrego da Natividade', wMin: 2.6, wMax: 4.2, smooth: 2, displace: false });
+    mainCreek = res.creek; creeks.push(res.creek); log('creek Natividade', res.stats);
+  }
+  if (tribLine) {
+    // join level = main creek water level where the tributary meets it
+    let join = -1e9;
+    if (mainCreek) { const e = tribLine[tribLine.length - 1]; let bd = 1e9; for (const q of mainCreek.pts) { const d = Math.hypot(q[0] - e[0], q[1] - e[1]); if (d < bd) { bd = d; join = q[2]; } } }
+    const res = buildCreek(withAcc(tribLine, 300, 1500), ctxBase, { name: 'Afluente do Natividade', wMin: 1.2, wMax: 2.0, smooth: 2, displace: false, joinLevel: join });
+    creeks.push(res.creek); log('creek afluente', res.stats);
+  }
+  // ---- 2) Canal do Triângulo: from the viaduto do Centro, past the Capela Mortuária, east along
+  //         the railway (seen on the album photos), then north under the Centro to the Rio Doce
+  //         following the valley line of the hydrology pass (source/creek_raw.json).
+  const fixFile = path.join(SRC, 'canal_triangulo.json');
+  if (fs.existsSync(fixFile) && fs.existsSync(path.join(SRC, 'creek_raw.json'))) {
+    const canal = JSON.parse(fs.readFileSync(fixFile, 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(path.join(SRC, 'creek_raw.json'), 'utf8'));
+    const k = raw.findIndex(p => Math.hypot(p[0] - canal.joinHydro[0], p[1] - canal.joinHydro[1]) < 20);
+    const head = canal.pts.map(([x, z], i, a) => [x, z, 0, 400 + 600 * i / a.length]);
+    const tail = raw.slice(k).map(p => [p[0], p[1], p[2], Math.max(1000, p[3] / 40)]);
+    const res = buildCreek(head.concat(tail), ctxBase, { name: 'Canal do Triângulo', wMin: 1.6, wMax: 2.6, toRiver: true, smooth: 3 });
+    creeks.push(res.creek); log('creek canal', res.stats);
+  }
+  // clear trees standing in any water / on the canal walls
   const n0 = trees.length;
-  for (let k = trees.length - 1; k >= 0; k--) {
-    const [x, z] = trees[k];
-    for (const i of tg.query(x, z, 6)) {
-      const a = cp[i], b = cp[i + 1];
-      if (a[4] === 2 && b[4] === 2) continue;
-      const q = segPointDist(x, z, a[0], a[1], b[0], b[1]);
-      if (q.d < a[3] / 2 + (a[4] === 1 ? 1.6 : 0.9)) { trees.splice(k, 1); break; }
+  for (const cr of creeks) {
+    const cp = cr.pts;
+    const tg = new Grid(20);
+    for (let i = 0; i < cp.length - 1; i++) tg.addBox(i, Math.min(cp[i][0], cp[i + 1][0]), Math.min(cp[i][1], cp[i + 1][1]), Math.max(cp[i][0], cp[i + 1][0]), Math.max(cp[i][1], cp[i + 1][1]));
+    for (let k = trees.length - 1; k >= 0; k--) {
+      const [x, z] = trees[k];
+      for (const i of tg.query(x, z, 6)) {
+        const a = cp[i], b = cp[i + 1];
+        if (a[4] === 2 && b[4] === 2) continue;
+        const q = segPointDist(x, z, a[0], a[1], b[0], b[1]);
+        if (q.d < a[3] / 2 + (a[4] === 1 ? 1.6 : 0.9)) { trees.splice(k, 1); break; }
+      }
     }
   }
-  log('trees removed from creek bed', n0 - trees.length);
+  log('trees removed from creek beds', n0 - trees.length);
+  creek = creeks[0] || null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -382,6 +433,7 @@ const city = {
   neigh: C.neigh,
   extras: C.extras,
   creek,
+  creeks,
 };
 fs.writeFileSync(path.join(OUT, 'city.json'), JSON.stringify(city));
 

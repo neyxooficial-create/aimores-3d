@@ -38,9 +38,23 @@ function quadUp(b, p0, p1, p2, p3, u0, u1, u2, u3, col, cols) {
   return ny >= 0;
 }
 
-export function buildCreek(city, T, day, Q) {
-  const C = city.creek;
-  if (!C) return null;
+export function buildCreeks(city, T, day, Q) {
+  const list = city.creeks || (city.creek ? [city.creek] : []);
+  if (!list.length) return null;
+  const all = new THREE.Group();
+  all.name = 'corregos';
+  all.userData.riparian = [];
+  for (const C of list) {
+    const g = buildOneCreek(C, T, day, Q);
+    if (!g) continue;
+    all.add(g);
+    all.userData.riparian.push(...g.userData.riparian);
+  }
+  return all;
+}
+
+function buildOneCreek(C, T, day, Q) {
+  if (!C || C.pts.length < 3) return null;
   const P = C.pts.map(([x, z, ws, w, mode]) => ({ x, z, ws, w, mode }));
   const n = P.length;
   {
@@ -255,8 +269,8 @@ export function buildCreek(city, T, day, Q) {
 /** Grid cells (Uint8 GW*GH) that must keep full terrain detail (creek banks). */
 export function creekDetailMask(city, T) {
   const mask = new Uint8Array(T.GW * T.GH);
-  if (!city.creek) return mask;
-  for (const [x, z, , w, mode] of city.creek.pts) {
+  const list = city.creeks || (city.creek ? [city.creek] : []);
+  for (const cr of list) for (const [x, z, , w, mode] of cr.pts) {
     if (mode === 2) continue;
     const r0 = Math.round((z - T.ZMIN) / T.G), c0 = Math.round((x - T.XMIN) / T.G);
     const k = Math.ceil((w / 2 + 4) / T.G);

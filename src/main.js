@@ -5,7 +5,7 @@ import { loadAll } from './data.js';
 import { buildTerrain, buildBackdrop } from './terrain.js';
 import { DayCycle, brasiliaNow } from './sky.js';
 import { buildRiver, buildLakes } from './water.js';
-import { buildCreek, creekDetailMask } from './creek.js';
+import { buildCreeks, creekDetailMask } from './creek.js';
 import { legacy as L } from './legacy/legacy.js';
 import { nextFrame } from './util.js';
 import { placeLamps, buildLamps, patchTreeNight, patchNightLight } from './lamps.js';
@@ -90,7 +90,7 @@ async function main() {
   if (lakes) scene.add(lakes);
 
   await say('Córrego…');
-  const creek = buildCreek(city, T, day, Q);
+  const creek = buildCreeks(city, T, day, Q);
   if (creek) scene.add(creek);
 
   await say('Ruas, calçadas e meio-fio…');
@@ -250,10 +250,10 @@ async function main() {
     const y = name.startsWith('Viaduto') ? vd.h + 12 : T.at(x, z) + (name.startsWith('Igreja') ? 42 : 18);
     labels.add(name.replace('Estadio', 'Estádio'), new THREE.Vector3(x, y, z), 'lbl poi', 2600);
   }
-  if (city.creek) {
-    const cp = city.creek.pts, k = cp.findIndex(p => p[1] < 120 && p[4] === 0);
-    const p = cp[k > 0 ? k : cp.length >> 1];
-    labels.add('Córrego', new THREE.Vector3(p[0], p[2] + 8, p[1]), 'lbl poi', 1500);
+  for (const cr of city.creeks || []) {
+    const cp = cr.pts, open = cp.filter(p => p[4] === 0);
+    const p = open[Math.floor(open.length * 0.45)] || cp[cp.length >> 1];
+    labels.add(cr.name, new THREE.Vector3(p[0], p[2] + 8, p[1]), 'lbl poi', 1500);
   }
   const limits = new THREE.Group();
   limits.name = 'limites';
@@ -280,7 +280,9 @@ async function main() {
   const nbLabel = n => (city.neigh[n] ? city.neigh[n].label : [0, 0]);
   const poi = n => { const p = city.extras.poi.find(q => q[0].startsWith(n)); return p ? [p[1], 0, p[2]] : [0, 0, 0]; };
   // most scenic stretch: the natural channel through the Triângulo woods
-  const creekPt = (() => { if (!city.creek) return [-560, 0, -200]; const cp = city.creek.pts; const p = cp.find(q => q[1] < 140 && q[1] > 60 && q[4] === 0) || cp[cp.length >> 1]; return [p[0], 0, p[1]]; })();
+  // most scenic stretch of the Córrego da Natividade: the wooded corridor east of the Estádio
+  const creekPt = (() => { const cr = (city.creeks || [])[0]; if (!cr) return [-560, 0, -200]; const cp = cr.pts; const p = cp.find(q => q[1] < 250 && q[1] > 150 && q[4] === 0) || cp[cp.length >> 1]; return [p[0], 0, p[1]]; })();
+  const canalPt = (() => { const cr = (city.creeks || []).find(c => c.name.startsWith('Canal')); if (!cr) return creekPt; const p = cr.pts[Math.floor(cr.pts.length * 0.12)]; return [p[0], 0, p[1]]; })();
   const views = {
     geral: { t: [-120, 0, 120], d: 2300, pol: 0.95, az: -0.35 },
     residencial: { t: [nbLabel('Nilton Freire Sampaio')[0], 0, nbLabel('Nilton Freire Sampaio')[1]], d: 380, pol: 0.85, az: -0.3 },
@@ -294,7 +296,8 @@ async function main() {
       az: (() => { const [a, b] = vd.deck, dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), nx = -dz / l, nz = dx / l; return Math.atan2(nx * 0.85 + dx / l * 0.5, nz * 0.85 + dz / l * 0.5); })(),
     },
     viadutocentro: { t: viaduct2 && viaduct2.center ? [viaduct2.center[0], 0, viaduct2.center[2]] : [-930, 0, -70], d: 150, pol: 1.1, az: -0.9 },
-    corrego: { t: creekPt, d: 45, pol: 1.15, az: 2.4 },
+    corrego: { t: creekPt, d: 55, pol: 1.1, az: 2.4 },
+    canal: { t: canalPt, d: 60, pol: 1.0, az: -2.2 },
     rio: { t: [-120, 0, -860], d: 520, pol: 1.15, az: 2.6 },
   };
   let anim = null;

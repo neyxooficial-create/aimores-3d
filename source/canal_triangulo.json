@@ -1,0 +1,5 @@
+{
+  "note": "Canal visto nas fotos do álbum (viaduto 1/70 e Triângulo oeste/norte): sai junto à rampa do viaduto do Centro, passa entre a Capela Mortuária e a R. Jurandyr Borges Rocha, segue a leste pela faixa verde ao sul da ferrovia (R. Antônio Balão) até perto do Campo do Botafogo. Daí em diante segue a linha de drenagem (creek_raw.json) por baixo da ferrovia e do Centro até o Rio Doce. Coordenadas locais em metros.",
+  "pts": [[-878, -40], [-850, -42], [-820, -44], [-790, -45], [-760, -47], [-730, -50], [-700, -58], [-655, -72], [-620, -86], [-580, -102], [-545, -117], [-522, -135], [-512, -160], [-505, -185]],
+  "joinHydro": [-490, -223]
+}
