@@ -7,10 +7,10 @@ import { DayCycle, brasiliaNow } from './sky.js';
 import { buildRiver, buildLakes } from './water.js';
 import { buildCreeks, creekDetailMask } from './creek.js';
 import { legacy as L } from './legacy/legacy.js';
-import { nextFrame } from './util.js';
+import { nextFrame, segDist } from './util.js';
 import { placeLamps, buildLamps, patchTreeNight, patchNightLight } from './lamps.js';
 import { buildTrees } from './trees.js';
-import { buildRoads, asphaltTexture } from './roads.js';
+import { buildRoads, asphaltTexture, settTexture } from './roads.js';
 import { Traffic } from './traffic.js';
 import { buildRailLite } from './rail.js';
 import { buildBuildings } from './buildings.js';
@@ -19,9 +19,8 @@ import { Streets } from './streets.js';
 import { Trains } from './train.js';
 import { Sound } from './audio.js';
 import { Explore } from './explore.js';
-import { People } from './people.js';
 import { Weather } from './weather.js';
-import { buildChurch as buildChurchV6, buildStation as buildStationV6, buildPraca as buildPracaV6 } from './landmarks.js';
+import { buildChurch as buildChurchV6, buildStation as buildStationV6, buildPraca as buildPracaV6, buildPracinha, buildCemetery } from './landmarks.js';
 import { buildBumps, bumpField } from './bumps.js';
 
 const params = new URLSearchParams(location.search);
@@ -114,17 +113,69 @@ async function main() {
     const keep = w => !ex7((w[0] + w[2]) / 2, (w[1] + w[3]) / 2) && !ex7(w[0], w[1]) && !ex7(w[2], w[3]);
     city.walls = city.walls.filter(keep); city.gates = city.gates.filter(keep);
   }
-  const roads = buildRoads(city, T, data.meshes, { exclude: viadEx, skipIds: viadIds, quality: Q });
+  // street surfaces are only removed where the viaduct deck really is above them: the round caps
+  // of the exclusion used to cut a hole at the foot of the ramps (ground showing through)
+  const roadEx = viadEx && city.viaduct2 && (() => {
+    const segs = [];
+    for (const w of city.viaduct2.ways) for (let i = 0; i < w.pts.length - 1; i++) segs.push([w.pts[i][0], w.pts[i][1], w.pts[i + 1][0], w.pts[i + 1][1], w.h[i], w.h[i + 1], w.w / 2 + 2.2]);
+    return (x, z) => {
+      if (!viadEx(x, z)) return false;
+      for (const [ax, az, bx, bz, ha, hb, hw] of segs) {
+        const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1, t = ((x - ax) * dx + (z - az) * dz) / L2;
+        if (t < 0 || t > 1) continue;
+        const px = ax + dx * t, pz = az + dz * t;
+        if (Math.hypot(x - px, z - pz) > hw) continue;
+        if (ha + (hb - ha) * t - T.at(px, pz) > 1.0) return true;
+      }
+      return false;
+    };
+  })();
+  const roads = buildRoads(city, T, data.meshes, { exclude: roadEx || viadEx, skipIds: viadIds, quality: Q });
   scene.add(roads);
   if (viadEx) for (const r of city.roads) if (viadIds.has(r.id)) r.b = true;
 
   await say('Igreja, praça e campos…');
   const church = L.buildChurch(city, T, scene);
-  // churches, praça and station rebuilt from the photo album (legacy builders only give the frame)
+  // churches, praça and station rebuilt from the photo album; the Matriz stands on its real
+  // footprint (the building polygon at R. Olegário Maciel 1), facing Rua Santos Dumont
   scene.remove(church.group);
-  const church6 = buildChurchV6(T, church.frame);
+  const inPoly2 = (x, z, p) => { let c = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) if ((p[i][1] > z) !== (p[j][1] > z) && x < (p[j][0] - p[i][0]) * (z - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]) c = !c; return c; };
+  const drive = city.roads.filter(r => !['footway', 'path', 'steps', 'pedestrian'].includes(r.hw));
+  const roadEdge = (x, z) => { let d = 1e9; for (const r of drive) for (let i = 0; i < r.p.length - 1; i++) { const [ax, az] = r.p[i], [bx, bz] = r.p[i + 1]; if (Math.min(ax, bx) > x + 30 || Math.max(ax, bx) < x - 30 || Math.min(az, bz) > z + 30 || Math.max(az, bz) < z - 30) continue; d = Math.min(d, segDist(x, z, ax, az, bx, bz).d - (r.w || 6) / 2); } return d; };
+  const churchB = city.buildings.find(b => inPoly2(-1186, 40, b.p));
+  let fr6 = church.frame;
+  if (churchB) {
+    const p = churchB.p;
+    let cx = 0, cz = 0; for (const q of p) { cx += q[0]; cz += q[1]; } cx /= p.length; cz /= p.length;
+    let ux = 0, uz = 1, best = 0;
+    for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L > best) { best = L; ux = (b[0] - a[0]) / L; uz = (b[1] - a[1]) / L; } }
+    if (uz > 0) { ux = -ux; uz = -uz; } // the front faces north, towards the street
+    let half = 0; for (const q of p) half = Math.max(half, Math.abs((q[0] - cx) * ux + (q[1] - cz) * uz));
+    fr6 = { C: [cx, cz], f: [ux, uz], half, roadEdge };
+  }
+  const church6 = buildChurchV6(T, fr6);
   scene.add(church6.group);
   church.group = church6.group;
+  church.center = [church6.center[0], church6.center[2]]; church.front = church6.front;
+  const inYard = (x, z) => inPoly2(x, z, church6.yard);
+  city.trees = city.trees.filter(t => !inYard(t[0], t[1]));
+  city.walls = city.walls.filter(w => !inYard((w[0] + w[2]) / 2, (w[1] + w[3]) / 2));
+  city.gates = city.gates.filter(w => !inYard((w[0] + w[2]) / 2, (w[1] + w[3]) / 2));
+  // pracinha triangular in front of the Matriz (canteiro between Santos Dumont / Olegário Maciel)
+  let pracinha = null;
+  {
+    const byId = id => city.roads.find(r => r.id === id);
+    const r1 = byId(309442908), r2 = byId(309442910), r3 = byId(309444230);
+    if (r1 && r2 && r3) {
+      const A = r1.p[0], B = r1.p[r1.p.length - 1], Cc = r2.p[r2.p.length - 1];
+      pracinha = buildPracinha(T, [A, B, Cc], [(r1.w || 7) / 2 + 0.3, (r2.w || 7) / 2 + 0.3, (r3.w || 8) / 2 + 0.6], [church.center[0], church.center[1]]);
+      scene.add(pracinha.group);
+      const inTri = (x, z) => inPoly2(x, z, pracinha.tri);
+      city.trees = city.trees.filter(t => !(inTri(t[0], t[1]) && Math.hypot(t[0] - pracinha.center[0], t[1] - pracinha.center[1]) < 4.5));
+      city.walls = city.walls.filter(w => !inTri((w[0] + w[2]) / 2, (w[1] + w[3]) / 2));
+      day.onChange(d => pracinha.group.userData.setNight(THREE.MathUtils.smoothstep(d.night, 0.3, 0.6)));
+    }
+  }
   const praca = buildPracaV6(city, T, day);
   if (praca) {
     scene.add(praca.group);
@@ -133,15 +184,23 @@ async function main() {
     praca.palms = praca.palms.concat(church6.palms);
   }
   L.buildFields(city, T, scene);
+  // Cemitério São João: rebuilt (jazigos, cruzes, capelinhas, aleias, muro)
+  for (const pc of city.extras.pitches || []) {
+    if (pc.k !== 'cemetery') continue;
+    const cem = buildCemetery(T, pc.p, roadEdge);
+    scene.add(cem.group);
+    city.trees = city.trees.filter(t => !cem.inside(t[0], t[1])).concat(cem.trees);
+    city.walls = city.walls.filter(w => !cem.inside((w[0] + w[2]) / 2, (w[1] + w[3]) / 2));
+    city.buildings = city.buildings.filter(b => { let x = 0, z = 0; for (const q of b.p) { x += q[0]; z += q[1]; } return !cem.inside(x / b.p.length, z / b.p.length); });
+  }
 
   await say('Casas, telhados e muros…');
-  const fr = church.frame;
   const inChurch = b => {
+    if (b === churchB) return true;
     let x = 0, z = 0;
     for (const p of b.p) { x += p[0]; z += p[1]; }
     x /= b.p.length; z /= b.p.length;
-    const dx = x - fr.C[0], dz = z - fr.C[1], f = dx * fr.f[0] + dz * fr.f[1], r = dx * fr.r[0] + dz * fr.r[1];
-    return Math.abs(r) < fr.fx + 2 && f > fr.fz0 - 2 && f < fr.fz1 + 2;
+    return inYard(x, z) || b.p.some(q => inYard(q[0], q[1]) && inYard(x, z));
   };
   const buildings = buildBuildings(city, T, { skip: b => inChurch(b) || /Esta(ç|c)ão Aimor/i.test(b.osm || ''), quality: Q });
   scene.add(buildings);
@@ -177,7 +236,18 @@ async function main() {
   const viaduct2 = L.buildViaductCentro(city, T, scene, rail.paths);
   L.buildClub(city, T, scene);
   { const st = buildStationV6(city, T, city.rail[0].pts); if (st) scene.add(st); }
-  L.buildLote(city, T, scene);
+  {
+    // loteamento streets: paralelepípedo like every other street in town (no dirt)
+    const lote = L.buildLote(city, T, scene);
+    if (lote) {
+      const tx = settTexture(Q === 'low' ? 512 : undefined);
+      const map = tx.map.clone(); map.repeat.set(3, 3); map.needsUpdate = true;
+      const nmap = tx.normalMap ? tx.normalMap.clone() : null; if (nmap) { nmap.repeat.set(3, 3); nmap.needsUpdate = true; }
+      lote.material.map = map; lote.material.normalMap = nmap; lote.material.roughness = 0.85;
+      const col = lote.geometry.attributes.color; if (col) { col.array.fill(1); col.needsUpdate = true; }
+      lote.material.needsUpdate = true;
+    }
+  }
   L.buildFootbridges(city, T, scene, city.viaduct.railtop);
 
   // mata ciliar along the creek
@@ -205,7 +275,8 @@ async function main() {
   const traffic = new Traffic(city, T, roadH, day, Q);
   scene.add(traffic.group);
   const trains = new Trains({ city, T, scene, day, sound, Q, legacy: L });
-  const people = new People({ city, T, scene, day, Q });
+  // pedestrians removed (they cost a lot of frame time for little gain)
+  const people = { update() {}, mesh: { visible: false } };
   const weather = new Weather({ scene, day, renderer, Q });
   { const ms = []; for (const g of [roads, buildings]) g.traverse(o => { if (o.isMesh) ms.push(o.material); }); weather.addWet(ms); }
   const wsel = $('weather'); if (wsel) wsel.onchange = () => { weather.set(wsel.value); wake(); };
@@ -393,7 +464,6 @@ async function main() {
   document.querySelectorAll('[data-view]').forEach(b => { b.onclick = () => goView(b.dataset.view); });
   const toggle = (id, fn) => { const el = $(id); el.onchange = () => { fn(el.checked); wake(); }; fn(el.checked); };
   toggle('t_cars', v => { traffic.group.visible = v; });
-  toggle('t_people', v => { people.mesh.visible = v; });
   toggle('t_train', v => { trains.group.userData.off = !v; });
   let labelsOn = true, labelsLow = false, labelsX = false;
   toggle('t_labels', v => { labelsOn = v; labels.setGroupVisible('lbl nb', v && !labelsLow); labels.setGroupVisible('lbl poi', v); });
@@ -442,7 +512,9 @@ async function main() {
   let awake = true;
   function wake() { awake = true; idle = 0; }
   controls.addEventListener('change', wake);
-  if (Q === 'medium' || Q === 'low') renderer.shadowMap.autoUpdate = false;
+  // the shadow map is only re-rendered when the view or the sun changes (moving cars/trains use
+  // contact shadows): that pass over the whole city every frame was what made Ultra stutter
+  renderer.shadowMap.autoUpdate = false;
   let lastClockUi = 0, lastTrainUi = 0;
   const fmtH = h => `${String(Math.floor(h) % 24).padStart(2, '0')}:${String(Math.round((h % 1) * 60) % 60).padStart(2, '0')}`;
   function updateTrainUi() {
@@ -483,7 +555,7 @@ async function main() {
       const h = day.hours + dt * clockSpeed / 3600;
       day.setTime(h);
       if (performance.now() - lastClockUi > 250) { syncClock(); lastClockUi = performance.now(); }
-      if (clockSpeed > 1) shadowDirty = true;
+      if (clockSpeed > 1 && frames > 4) shadowDirty = true;
     }
     day.update(dt, camera, controls.target);
     if (trees.visible) trees.userData.update(camera, controls.target);
@@ -498,9 +570,10 @@ async function main() {
     if (!renderer.shadowMap.autoUpdate) {
       frames++;
       const R = day.shadowRadius || 300;
-      if (shadowDirty || lastShadowT.distanceTo(controls.target) > R * 0.04 || Math.abs(lastShadowR - R) > R * 0.05 || frames > 20) {
+      const camT = explore.mode ? camera.position : controls.target;
+      if (shadowDirty || lastShadowT.distanceTo(camT) > R * 0.1 || Math.abs(lastShadowR - R) > R * 0.12 || frames > 900) {
         renderer.shadowMap.needsUpdate = true; shadowDirty = false; frames = 0;
-        lastShadowT.copy(controls.target); lastShadowR = R;
+        lastShadowT.copy(camT); lastShadowR = R;
       }
     }
     markers.tickScale(camera);
@@ -526,10 +599,11 @@ async function main() {
   $('loading').classList.add('done');
   window.__ready = true;
   window.__app = {
-    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, people, weather, sound, explore, groundAt, markers, places, goView, flyTo,
+    THREE, scene, camera, controls, renderer, city, T, day, traffic, trains, people, weather, sound, explore, groundAt, church, markers, places, goView, flyTo,
     setTime: h => { day.setTime(h); shadowDirty = true; syncClock(); },
     setCam: (p, t) => { anim = null; controls.target.set(...t); camera.position.set(...p); controls.update(); },
     renderFrame: (n = 1) => { for (let i = 0; i < n; i++) { renderer.shadowMap.needsUpdate = true; frame(); } return true; },
+    bench: (n = 30) => { const gl = renderer.getContext(); const px = new Uint8Array(4); frame(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); const t0 = performance.now(); for (let i = 0; i < n; i++) frame(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); return (performance.now() - t0) / n; },
     info: () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, geom: renderer.info.memory.geometries, tex: renderer.info.memory.textures }),
   };
 }

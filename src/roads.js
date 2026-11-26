@@ -249,12 +249,59 @@ float rn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
     group.add(cm);
   }
 
+
+  // ---------------------------------------------------------------- rotatórias: grass island with a
+  // painted kerb (black/yellow) and a small flower bed with a palm-like shrub in the middle
+  for (const rb of city.roundabouts || []) {
+    const [cx, cz] = rb.c, gb = new GeoBuilder(true, true), N = 48;
+    const yAt = (x, z) => T.at(x, z);
+    const ring = (r, a) => [cx + r * Math.cos(a), cz + r * Math.sin(a)];
+    for (let k = 0; k < N; k++) {
+      const a0 = k / N * Math.PI * 2, a1 = (k + 1) / N * Math.PI * 2;
+      const o0 = ring(rb.rin, a0), o1 = ring(rb.rin, a1), i0 = ring(rb.rin - 0.18, a0), i1 = ring(rb.rin - 0.18, a1);
+      const col = (k >> 1) % 2 ? srgb(235, 190, 40) : srgb(30, 30, 30);
+      const y0 = yAt(...o0), y1 = yAt(...o1);
+      // outer face of the kerb (outward normal), top, then grass
+      gb.quad([o1[0], y1 - 0.05, o1[1]], [o0[0], y0 - 0.05, o0[1]], [o0[0], y0 + 0.28, o0[1]], [o1[0], y1 + 0.28, o1[1]], [0, 0], [1, 0], [1, 1], [0, 1], col);
+      gb.quad([o0[0], y0 + 0.28, o0[1]], [i0[0], y0 + 0.28, i0[1]], [i1[0], y1 + 0.28, i1[1]], [o1[0], y1 + 0.28, o1[1]], [0, 0], [1, 0], [1, 1], [0, 1], srgb(220, 218, 210), [0, 1, 0]);
+      const g = srgb(78, 128, 52), gc = [cx, yAt(cx, cz) + 0.3, cz];
+      const t0 = [i0[0], y0 + 0.26, i0[1]], t1 = [i1[0], y1 + 0.26, i1[1]];
+      const ny = (t0[2] - gc[2]) * (t1[0] - gc[0]) - (t0[0] - gc[0]) * (t1[2] - gc[2]);
+      if (ny > 0) gb.tri(gc, t0, t1, [0, 0], [1, 0], [0, 1], g, [0, 1, 0]); else gb.tri(gc, t1, t0, [0, 0], [0, 1], [1, 0], g, [0, 1, 0]);
+    }
+    // flower bed ring (red/yellow) at 2.2 m
+    for (let k = 0; k < 28; k++) {
+      const a = k / 28 * Math.PI * 2, [x, z] = ring(2.2, a), y = yAt(x, z) + 0.3;
+      const col = k % 2 ? srgb(200, 40, 50) : srgb(240, 200, 40), s = 0.32;
+      gb.quad([x - s, y + 0.25, z - s], [x - s, y + 0.25, z + s], [x + s, y + 0.25, z + s], [x + s, y + 0.25, z - s], [0, 0], [1, 0], [1, 1], [0, 1], col, [0, 1, 0]);
+      gb.quad([x - s, y, z + s], [x + s, y, z + s], [x + s, y + 0.25, z + s], [x - s, y + 0.25, z + s], [0, 0], [1, 0], [1, 1], [0, 1], col.map(v => v * 0.7));
+      gb.quad([x + s, y, z - s], [x - s, y, z - s], [x - s, y + 0.25, z - s], [x + s, y + 0.25, z - s], [0, 0], [1, 0], [1, 1], [0, 1], col.map(v => v * 0.7));
+    }
+    const m = new THREE.Mesh(gb.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
+    m.receiveShadow = true; m.name = 'rotatoria';
+    group.add(m);
+  }
+
   // ---------------------------------------------------------------- painted lines
   const skip = opts.skipIds || new Set();
   const lines = new GeoBuilder(true, true);
   const yellow = srgb(236, 186, 40), white = srgb(236, 236, 230);
   // uv.x = 0..1 across the stripe, uv.y = metres along; extra = dash mode (0 solid, 1 dashed)
   lines.enableExtra();
+  // painted lines stop where they would cross another street's carriageway (junctions)
+  const segG = new Map(), gk = (x, z) => Math.floor(x / 20) + ',' + Math.floor(z / 20);
+  for (const r of city.roads) {
+    if (['footway', 'path', 'steps', 'pedestrian'].includes(r.hw) || r.b) continue;
+    for (let i = 0; i < r.p.length - 1; i++) {
+      const [ax, az] = r.p[i], [bx, bz] = r.p[i + 1], hw = (r.w || 6) / 2;
+      for (let gx = Math.floor((Math.min(ax, bx) - hw) / 20); gx <= Math.floor((Math.max(ax, bx) + hw) / 20); gx++)
+        for (let gz = Math.floor((Math.min(az, bz) - hw) / 20); gz <= Math.floor((Math.max(az, bz) + hw) / 20); gz++) {
+          const k = gx + ',' + gz; let a = segG.get(k); if (!a) segG.set(k, a = []); a.push([r, ax, az, bx, bz, hw]);
+        }
+    }
+  }
+  const inOther = (x, z, self) => { for (const [r, ax, az, bx, bz, hw] of segG.get(gk(x, z)) || []) if (r !== self && segDist(x, z, ax, az, bx, bz).d < hw - 0.3) return true; return false; };
+  let curRoad = null;
   const stripe = (pts, off, w, col, dashed, lift = 0.135) => {
     let s = 0;
     for (let i = 0; i < pts.length - 1; i++) {
@@ -262,11 +309,13 @@ float rn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
       const L = Math.hypot(bx - ax, bz - az);
       if (L < 0.1) continue;
       const ux = (bx - ax) / L, uz = (bz - az) / L, nx = -uz, nz = ux;
-      const steps = Math.max(1, Math.ceil(L / 6));
+      const steps = Math.max(1, Math.ceil(L / 3));
       for (let k = 0; k < steps; k++) {
         const t0 = k / steps, t1 = (k + 1) / steps;
         const x0 = ax + (bx - ax) * t0 + nx * off, z0 = az + (bz - az) * t0 + nz * off;
         const x1 = ax + (bx - ax) * t1 + nx * off, z1 = az + (bz - az) * t1 + nz * off;
+        if ((city.roundabouts || []).some(rb => Math.hypot((x0 + x1) / 2 - rb.c[0], (z0 + z1) / 2 - rb.c[1]) < rb.rout + 1)) continue;
+        if (curRoad && (inOther(x0, z0, curRoad) || inOther(x1, z1, curRoad))) continue;
         const y0 = T.at(x0, z0) + lift, y1 = T.at(x1, z1) + lift;
         const s0 = s + L * t0, s1 = s + L * t1;
         lines.quad([x0 + nx * w, y0, z0 + nz * w], [x1 + nx * w, y1, z1 + nz * w], [x1 - nx * w, y1, z1 - nz * w], [x0 - nx * w, y0, z0 - nz * w],
@@ -276,6 +325,7 @@ float rn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
     }
   };
   for (const r of city.roads) {
+    curRoad = r;
     if (r.s !== 'asphalt' || r.b || skip.has(r.id) || r.id === 1314627854 || r.id === 1314627855 || r.id === 1314627853) continue;
     if (!['trunk', 'tertiary', 'trunk_link', 'primary', 'secondary'].includes(r.hw) || (r.w || 0) < 7) continue;
     if (r.hw === 'trunk') {

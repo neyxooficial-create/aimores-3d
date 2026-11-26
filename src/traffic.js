@@ -1,7 +1,7 @@
 // Trânsito: procedural vehicles (hatch, sedan, SUV, pickup, moto, bus, truck), right-hand traffic
 // on the street graph with simple car-following, parked cars, head/tail lights at night.
 import * as THREE from 'three';
-import { GeoBuilder, rng, hash, srgb } from './util.js';
+import { GeoBuilder, rng, hash, srgb, contactShadows } from './util.js';
 
 // vertex attribute "part": 0 = fixed colour, 1 = body paint (instance colour), 2 = headlight, 3 = taillight
 const GLASS = srgb(28, 34, 40), TYRE = srgb(24, 24, 26), RIM = srgb(150, 152, 155), TRIM = srgb(40, 40, 42), CHROME = srgb(190, 190, 195);
@@ -169,36 +169,74 @@ export class Traffic {
     this.mesh = this.group; // legacy name used by the UI toggle
     const R = this.R = rng(9001);
     // ------------------------------------------------------------ graph
+    // Every road is split into edges at each junction vertex (also where a street meets another one
+    // in the middle of its polyline), so cars can turn everywhere. Dead ends are pruned from the
+    // moving-car network: cars never have to turn around on the spot (that made them "blink").
     const ok = r => !['footway', 'path', 'track', 'steps', 'cycleway', 'pedestrian'].includes(r.hw) && r.p.length > 1 && !(r.s === 'dirt' && r.hw === 'service')
       && r.p.every(([x, z]) => T.inside(x, z, 3));
-    this.roads = city.roads.filter(ok).map(r => {
+    const key = p => Math.round(p[0] * 2) + ',' + Math.round(p[1] * 2);
+    const src = city.roads.filter(ok);
+    const use = new Map();
+    for (const r of src) { const seen = new Set(); for (const p of r.p) { const k = key(p); if (!seen.has(k)) { seen.add(k); use.set(k, (use.get(k) || 0) + 1); } } }
+    const mkEdge = (r, p) => {
       const len = [];
       let tot = 0;
-      for (let i = 0; i < r.p.length - 1; i++) { const l = Math.hypot(r.p[i + 1][0] - r.p[i][0], r.p[i + 1][1] - r.p[i][1]); len.push(l); tot += l; }
-      const speed = r.hw === 'trunk' ? 15 : r.hw === 'tertiary' || r.hw === 'trunk_link' ? 11 : r.s === 'dirt' ? 6 : r.s === 'paver' ? 7.5 : 9;
-      return { r, p: r.p, len, tot, speed, oneway: !!r.o, w: r.w || 6, cars: [] };
-    }).filter(x => x.tot > 3);
-    const key = p => Math.round(p[0] * 2) + ',' + Math.round(p[1] * 2);
-    this.nodes = new Map();
-    this.roads.forEach((rd, i) => {
-      for (const [end, k] of [[0, key(rd.p[0])], [1, key(rd.p[rd.p.length - 1])]]) {
-        let a = this.nodes.get(k); if (!a) this.nodes.set(k, a = []);
-        a.push({ i, end });
+      for (let i = 0; i < p.length - 1; i++) { const l = Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]); len.push(l); tot += l; }
+      const speed = r.hw === 'trunk' ? 14 : r.hw === 'tertiary' || r.hw === 'trunk_link' ? 10 : r.ring ? 6 : r.s === 'paver' ? 7.5 : 8.5;
+      const cum = [0]; for (const l of len) cum.push(cum[cum.length - 1] + l);
+      return { r, p, len, cum, tot, speed, oneway: !!r.o, w: r.w || 6, cars: [] };
+    };
+    this.roads = [];
+    for (const r of src) {
+      let st = 0;
+      for (let i = 1; i < r.p.length; i++) {
+        if (i === r.p.length - 1 || use.get(key(r.p[i])) > 1) {
+          const e = mkEdge(r, r.p.slice(st, i + 1));
+          if (e.tot > 0.5) this.roads.push(e);
+          st = i;
+        }
       }
-    });
+    }
     this.key = key;
+    const buildNodes = live => {
+      const nodes = new Map();
+      this.roads.forEach((rd, i) => {
+        if (live && !live[i]) return;
+        for (const [end, k] of [[0, key(rd.p[0])], [1, key(rd.p[rd.p.length - 1])]]) {
+          let a = nodes.get(k); if (!a) nodes.set(k, a = []);
+          a.push({ i, end });
+        }
+      });
+      return nodes;
+    };
+    // prune dead ends (iteratively) for the moving traffic
+    const live = this.roads.map(() => true);
+    for (let it = 0; it < 50; it++) {
+      const nodes = buildNodes(live);
+      let changed = false;
+      this.roads.forEach((rd, i) => {
+        if (!live[i]) return;
+        const out = endK => (nodes.get(endK) || []).filter(o => o.i !== i && !(this.roads[o.i].oneway && o.end === 1)).length;
+        const a = key(rd.p[0]), b = key(rd.p[rd.p.length - 1]);
+        const dead = rd.oneway ? out(b) === 0 : (out(a) === 0 || out(b) === 0);
+        if (dead) { live[i] = false; changed = true; }
+      });
+      if (!changed) break;
+    }
+    this.live = live;
+    this.nodes = buildNodes(live);
     // ------------------------------------------------------------ vehicles
     this.uniforms = { uLights: { value: 0 } };
     const mat = vehicleMaterial(this.uniforms);
     this.kinds = ['hatch', 'sedan', 'suv', 'pickup', 'moto', 'bus', 'truck'];
-    const nMove = { low: 45, medium: 100, high: 170, ultra: 240 }[Q];
-    const nPark = { low: 60, medium: 160, high: 320, ultra: 480 }[Q];
+    const nMove = { low: 20, medium: 40, high: 60, ultra: 80 }[Q];
+    const nPark = { low: 40, medium: 90, high: 150, ultra: 200 }[Q];
     const pick = () => { const t = R(); return t < 0.3 ? 'hatch' : t < 0.48 ? 'sedan' : t < 0.6 ? 'suv' : t < 0.72 ? 'pickup' : 'moto'; };
     // moving cars
     this.cars = [];
-    const trunkRoads = this.roads.filter(x => x.r.hw === 'trunk');
-    const mainRoads = this.roads.filter(x => ['trunk', 'tertiary'].includes(x.r.hw));
-    const weights = this.roads.map(x => x.tot * (x.r.hw === 'trunk' ? 3 : x.r.hw === 'tertiary' ? 2 : x.r.s === 'dirt' ? 0.3 : 1));
+    const trunkRoads = this.roads.filter((x, i) => live[i] && x.r.hw === 'trunk');
+    const mainRoads = this.roads.filter((x, i) => live[i] && ['trunk', 'tertiary'].includes(x.r.hw));
+    const weights = this.roads.map((x, i) => live[i] ? x.tot * (x.r.hw === 'trunk' ? 3 : x.r.hw === 'tertiary' ? 2 : x.r.s === 'dirt' ? 0.3 : 1) : 0);
     const wsum = weights.reduce((a, b) => a + b, 0);
     const randRoad = () => { let t = R() * wsum; for (let i = 0; i < weights.length; i++) { t -= weights[i]; if (t <= 0) return i; } return 0; };
     for (let k = 0; k < nMove; k++) {
@@ -212,15 +250,16 @@ export class Traffic {
       c.color = new THREE.Color().setRGB(...srgb(...col));
       rd.cars.push(c);
       this.cars.push(c);
+      c.next = this._pick(c);
     }
     // parked cars: along the kerb of residential / paved streets
     this.parked = [];
-    const parkable = this.roads.filter(x => ['residential', 'tertiary', 'unclassified'].includes(x.r.hw) && x.r.s !== 'dirt' && x.w >= 6 && !x.r.b);
+    const parkable = this.roads.filter(x => ['residential', 'tertiary', 'unclassified'].includes(x.r.hw) && x.r.s !== 'dirt' && x.w >= 6 && !x.r.b && !x.r.ring && x.tot > 24);
     const noPark = globalThis.__noPark;
     let guard = 0;
     while (this.parked.length < nPark && guard++ < nPark * 20 && parkable.length) {
       const rd = parkable[Math.floor(R() * parkable.length)];
-      const s = 8 + R() * Math.max(0, rd.tot - 16);
+      const s = 10 + R() * Math.max(0, rd.tot - 20);
       const side = R() < 0.5 ? 1 : -1;
       const at = this.at(rd, s, side * (rd.w / 2 - 1.05));
       if (noPark && noPark(at.x, at.z)) continue;
@@ -240,11 +279,12 @@ export class Traffic {
       if (!geo) continue;
       if (counts[kind]) {
         const im = new THREE.InstancedMesh(geo, mat, counts[kind]);
-        im.castShadow = Q !== 'low'; im.receiveShadow = true;
+        im.castShadow = false; im.receiveShadow = true;
         im.frustumCulled = false;
         im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        this.inst[kind] = { im, n: 0 };
-        this.group.add(im);
+        const blob = contactShadows(geo, counts[kind], kind === 'moto' ? 0.4 : 0.6);
+        this.inst[kind] = { im, n: 0, blob };
+        this.group.add(im); this.group.add(blob);
       }
       if (countsP[kind]) {
         const im = new THREE.InstancedMesh(geo, mat, countsP[kind]);
@@ -296,27 +336,79 @@ export class Traffic {
     return { x: ax + (bx - ax) * t - dz * off, z: az + (bz - az) * t + dx * off, dx, dz };
   }
 
-  _next(c) {
+  /** choose where a car goes at the end of its current edge */
+  _pick(c) {
     const rd = this.roads[c.ri];
     const endP = c.dir > 0 ? rd.p[rd.p.length - 1] : rd.p[0];
-    const opts = (this.nodes.get(this.key(endP)) || []).filter(o => o.i !== c.ri && !(this.roads[o.i].oneway && o.end === 1));
-    if (!opts.length) { if (!rd.oneway) { c.dir = -c.dir; c.s = rd.tot - c.s; } else { c.s = 0; } return; }
+    let opts = (this.nodes.get(this.key(endP)) || []).filter(o => o.i !== c.ri && !(this.roads[o.i].oneway && o.end === 1));
+    if (!opts.length) return null;
+    if (c.kind === 'truck' || c.kind === 'bus') {
+      const main = opts.filter(o => ['trunk', 'trunk_link', 'tertiary'].includes(this.roads[o.i].r.hw));
+      if (main.length) opts = main;
+    }
+    // avoid sharp U-like turns when there is another way
+    const hx = c.dir > 0 ? endP[0] - rd.p[rd.p.length - 2][0] : endP[0] - rd.p[1][0];
+    const hz = c.dir > 0 ? endP[1] - rd.p[rd.p.length - 2][1] : endP[1] - rd.p[1][1];
+    const ang = o => { const nr = this.roads[o.i]; const q = o.end === 0 ? nr.p[1] : nr.p[nr.p.length - 2]; const dx = q[0] - endP[0], dz = q[1] - endP[1]; return (hx * dx + hz * dz) / (Math.hypot(hx, hz) * Math.hypot(dx, dz) || 1); };
+    const good = opts.filter(o => ang(o) > -0.6);
+    if (good.length) opts = good;
     const o = opts[Math.floor(this.R() * opts.length)];
-    const nr = this.roads[o.i];
-    const k = rd.cars.indexOf(c); if (k >= 0) rd.cars.splice(k, 1);
-    nr.cars.push(c);
-    c.ri = o.i; c.dir = o.end === 0 ? 1 : -1;
-    c.s = 0;
-    if (c.kind === 'truck' && nr.r.hw !== 'trunk' && nr.r.hw !== 'trunk_link') { c.dir = -c.dir; }
+    return { ri: o.i, dir: o.end === 0 ? 1 : -1 };
   }
+
+  _lane(c, rd) { return c.kind === 'moto' ? Math.min(2.2, rd.w / 4 + 0.4) : rd.oneway ? (rd.r.ring ? 0.6 : 0) : Math.min(1.9, rd.w / 4); }
+
+  /** like at(), but bends of the polyline are rounded (quadratic Bézier) so the lane never jumps */
+  atSmooth(rd, s, off) {
+    s = Math.max(0, Math.min(rd.tot - 1e-3, s));
+    const n = rd.p.length, cum = rd.cum, len = rd.len;
+    let i = 0;
+    while (i < len.length - 1 && s > cum[i + 1]) i++;
+    for (const k of [i, i + 1]) {
+      if (k <= 0 || k >= n - 1) continue;
+      const rc = Math.min(5, len[k - 1] * 0.45, len[k] * 0.45);
+      if (rc < 0.2 || Math.abs(s - cum[k]) >= rc) continue;
+      const a = this.at(rd, cum[k] - rc, off), b = this.at(rd, cum[k] + rc, off);
+      const j0 = this.at(rd, cum[k] - 1e-4, off), j1 = this.at(rd, cum[k] + 1e-4, off);
+      const P1x = (j0.x + j1.x) / 2, P1z = (j0.z + j1.z) / 2;
+      const u = (s - (cum[k] - rc)) / (2 * rc), A = (1 - u) * (1 - u), M = 2 * u * (1 - u), C = u * u;
+      const tx = 2 * (1 - u) * (P1x - a.x) + 2 * u * (b.x - P1x), tz = 2 * (1 - u) * (P1z - a.z) + 2 * u * (b.z - P1z), tl = Math.hypot(tx, tz) || 1;
+      return { x: A * a.x + M * P1x + C * b.x, z: A * a.z + M * P1z + C * b.z, dx: tx / tl, dz: tz / tl };
+    }
+    return this.at(rd, s, off);
+  }
+
+  /** point at distance s from the start of travel on edge ri in direction dir, on the car's lane */
+  _pt(c, ri, dir, s) {
+    const rd = this.roads[ri];
+    const p = this.atSmooth(rd, dir > 0 ? s : rd.tot - s, this._lane(c, rd) * dir);
+    return [p.x, p.z];
+  }
+
+  _next(c) {
+    const rd = this.roads[c.ri];
+    const k = rd.cars.indexOf(c); if (k >= 0) rd.cars.splice(k, 1);
+    if (!c.next) { c.next = { ri: c.ri, dir: -c.dir }; }
+    c.prev = { ri: c.ri, dir: c.dir, rt: this._rt(c.ri, c.next.ri) };
+    c.ri = c.next.ri; c.dir = c.next.dir;
+    this.roads[c.ri].cars.push(c);
+    c.next = this._pick(c);
+  }
+
+  _rt(a, b) { return Math.max(0.5, Math.min(6, this.roads[a].tot / 2.2, this.roads[b].tot / 2.2)); }
 
   tick(dt) {
     if (!this.group.visible) return;
     const { M, q, v, one, up } = this;
     let b = 0;
+    const bez = (P0, P1, P2, u) => {
+      const a = (1 - u) * (1 - u), m = 2 * u * (1 - u), cc = u * u;
+      return [a * P0[0] + m * P1[0] + cc * P2[0], a * P0[1] + m * P1[1] + cc * P2[1],
+        2 * (1 - u) * (P1[0] - P0[0]) + 2 * u * (P2[0] - P1[0]), 2 * (1 - u) * (P1[1] - P0[1]) + 2 * u * (P2[1] - P1[1])];
+    };
     for (const c of this.cars) {
       const rd = this.roads[c.ri];
-      // car following on the same road and direction
+      // car following on the same edge, and into the next one
       let gap = 1e9;
       for (const o of rd.cars) {
         if (o === c || o.dir !== c.dir) continue;
@@ -324,25 +416,36 @@ export class Traffic {
         if (d > 0 && d < gap) gap = d - (o.len + c.len) / 2;
       }
       const remaining = rd.tot - c.s;
+      if (gap > 1e8 && c.next && remaining < 25) {
+        for (const o of this.roads[c.next.ri].cars) if (o !== c && o.dir === c.next.dir) gap = Math.min(gap, remaining + o.s - (o.len + c.len) / 2);
+      }
       let target = rd.speed * c.vmax;
-      if (remaining < 14) target = Math.min(target, 4 + remaining * 0.45); // slow down before junctions
+      if (c.next && remaining < 16) {
+        // slow down for the turn: sharper turn -> slower
+        const nr = this.roads[c.next.ri];
+        const e0 = c.dir > 0 ? rd.p[rd.p.length - 1] : rd.p[0], e1 = c.dir > 0 ? rd.p[rd.p.length - 2] : rd.p[1];
+        const n1 = c.next.dir > 0 ? nr.p[1] : nr.p[nr.p.length - 2];
+        const ax = e0[0] - e1[0], az = e0[1] - e1[1], bx = n1[0] - e0[0], bz = n1[1] - e0[1];
+        const cos = (ax * bx + az * bz) / (Math.hypot(ax, az) * Math.hypot(bx, bz) || 1);
+        if (cos < 0.9) target = Math.min(target, 3.2 + remaining * 0.35 + Math.max(0, cos) * 3);
+      }
       if (gap < 18) target = Math.min(target, Math.max(0, (gap - 2.5) * 0.9));
       // slow down for quebra-molas
       if (this.bumps) {
         const hx = Math.cos(c.yaw), hz = -Math.sin(c.yaw);
-        for (const b of this.bumps) {
-          const dx = b[0] - c.pos.x, dz = b[1] - c.pos.z;
+        for (const bb of this.bumps) {
+          const dx = bb[0] - c.pos.x, dz = bb[1] - c.pos.z;
           if (dx * dx + dz * dz > 1600) continue;
           const along = dx * hx + dz * hz, lat = Math.abs(dx * hz - dz * hx);
-          if (along > -2 && along < 35 && lat < b[4] + 1) target = Math.min(target, 2.2 + Math.max(0, along) * 0.3);
+          if (along > -2 && along < 35 && lat < bb[4] + 1) target = Math.min(target, 2.2 + Math.max(0, along) * 0.3);
         }
       }
       // stop at closed level crossings / red lights
       if (this.blockers) {
         const hx = Math.cos(c.yaw), hz = -Math.sin(c.yaw);
-        for (const b of this.blockers) {
-          if (!b.closed) continue;
-          const dx = b.x - c.pos.x, dz = b.z - c.pos.z;
+        for (const bl of this.blockers) {
+          if (!bl.closed) continue;
+          const dx = bl.x - c.pos.x, dz = bl.z - c.pos.z;
           if (dx * dx + dz * dz > 3600) continue;
           const along = dx * hx + dz * hz, lat = Math.abs(dx * hz - dz * hx);
           if (along > 5 && along < 60 && lat < 7) target = Math.min(target, Math.max(0, (along - 12.5 - c.len / 2) * 0.8));
@@ -351,23 +454,40 @@ export class Traffic {
       c.v += Math.max(-6 * dt, Math.min(2.2 * dt, target - c.v));
       c.v = Math.max(0, c.v);
       c.s += c.v * dt;
-      if (c.s >= rd.tot) { c.s -= rd.tot; this._next(c); }
+      for (let g = 0; g < 4 && c.s >= this.roads[c.ri].tot; g++) { c.s -= this.roads[c.ri].tot; this._next(c); }
       const r2 = this.roads[c.ri];
-      const lane = c.kind === 'moto' ? Math.min(2.2, r2.w / 4 + 0.4) : r2.oneway ? 0 : Math.min(1.9, r2.w / 4);
-      const sAlong = c.dir > 0 ? c.s : r2.tot - c.s;
-      const p = this.at(r2, sAlong, lane * c.dir);
-      const yawT = Math.atan2(-p.dz * c.dir, p.dx * c.dir);
-      let dy = yawT - c.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-      c.yaw += dt > 0 ? dy * Math.min(1, dt * 8) : dy;
-      const y = this.roadH(r2.r, p.x, p.z) + (this.bumpH ? this.bumpH(p.x, p.z) : 0);
-      c.pos.set(p.x, y, p.z);
+      // position: straight along the edge, a smooth curve (quadratic Bézier) through every junction
+      let x, z, hx, hz;
+      const tot = r2.tot;
+      const rtN = c.next ? this._rt(c.ri, c.next.ri) : 0;
+      if (c.next && tot - c.s < rtN) {
+        const P0 = this._pt(c, c.ri, c.dir, tot - rtN), J0 = this._pt(c, c.ri, c.dir, tot), J1 = this._pt(c, c.next.ri, c.next.dir, 0), P2 = this._pt(c, c.next.ri, c.next.dir, rtN);
+        const r = bez(P0, [(J0[0] + J1[0]) / 2, (J0[1] + J1[1]) / 2], P2, (c.s - (tot - rtN)) / (2 * rtN));
+        [x, z, hx, hz] = r;
+      } else if (c.prev && c.s < c.prev.rt && this.roads[c.prev.ri]) {
+        const pr = this.roads[c.prev.ri], rt = c.prev.rt;
+        const P0 = this._pt(c, c.prev.ri, c.prev.dir, pr.tot - rt), J0 = this._pt(c, c.prev.ri, c.prev.dir, pr.tot), J1 = this._pt(c, c.ri, c.dir, 0), P2 = this._pt(c, c.ri, c.dir, rt);
+        const r = bez(P0, [(J0[0] + J1[0]) / 2, (J0[1] + J1[1]) / 2], P2, 0.5 + c.s / (2 * rt));
+        [x, z, hx, hz] = r;
+      } else {
+        const p = this.atSmooth(r2, c.dir > 0 ? c.s : tot - c.s, this._lane(c, r2) * c.dir);
+        x = p.x; z = p.z; hx = p.dx * c.dir; hz = p.dz * c.dir;
+      }
+      if (hx * hx + hz * hz > 1e-8) {
+        const yawT = Math.atan2(-hz, hx);
+        let dy = yawT - c.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+        c.yaw += dt > 0 ? dy * Math.min(1, dt * 12) : dy;
+      }
+      const y = this.roadH(r2.r, x, z) + (this.bumpH ? this.bumpH(x, z) : 0);
+      c.pos.set(x, y, z);
       q.setFromAxisAngle(up, c.yaw);
       M.compose(c.pos, q, one);
       const I = this.inst[c.kind];
       I.im.setMatrixAt(c.slot, M);
+      I.blob.setMatrixAt(c.slot, M);
       if (this.beams.visible) this.beams.setMatrixAt(b++, M);
     }
-    for (const k in this.inst) { const I = this.inst[k]; I.im.count = I.n; I.im.instanceMatrix.needsUpdate = true; }
+    for (const k in this.inst) { const I = this.inst[k]; I.im.count = I.blob.count = I.n; I.im.instanceMatrix.needsUpdate = true; I.blob.instanceMatrix.needsUpdate = true; }
     this.beams.count = b;
     this.beams.instanceMatrix.needsUpdate = true;
   }

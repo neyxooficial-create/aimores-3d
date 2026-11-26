@@ -302,7 +302,7 @@ export function buildTrees(city, T, day, Q, palms = []) {
   addPair('imperial', nearA.imperial.solid, farA.imperial.solid, crownMatFar, crownMatFar, null);
   addPair('imperial', nearA.imperial.frond, farA.imperial.frond, frondMat, frondMat, depthFrond);
 
-  const NEAR_R = { low: 120, medium: 180, high: 280, ultra: 380 }[Q];
+  const NEAR_R = { low: 110, medium: 160, high: 220, ultra: 280 }[Q];
   const last = new THREE.Vector3(1e9, 0, 0);
   function rebuild(cx, cz) {
     const r2 = NEAR_R * NEAR_R;

@@ -9,7 +9,7 @@
 // Trens de carga (minério carregado para o porto, vazios de volta, carga geral) não têm horário
 // público; são gerados de forma determinística para cada dia (~1 a cada 45 min).
 import * as THREE from 'three';
-import { GeoBuilder, srgb, rng, segDist } from './util.js';
+import { GeoBuilder, srgb, rng, segDist, contactShadows } from './util.js';
 import { dayOfYear } from './sky.js';
 
 class Track {
@@ -149,10 +149,11 @@ export class Trains {
     };
     paxMat.customProgramCacheKey = () => 'paxcar';
     this.lightsU = { value: 0 };
-    const mk = (geo, mat, n) => { const m = new THREE.InstancedMesh(geo, mat, n); m.count = 0; m.frustumCulled = false; m.castShadow = Q !== 'low'; m.receiveShadow = true; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.group.add(m); return m; };
+    // moving: no shadow-map casting (the shadow map is refreshed lazily), a soft contact shadow instead
+    const mk = (geo, mat, n, blob = true) => { const m = new THREE.InstancedMesh(geo, mat, n); m.count = 0; m.frustumCulled = false; m.castShadow = false; m.receiveShadow = true; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.group.add(m); if (blob) { m.userData.blob = contactShadows(geo, n, 0.5, 1.05); this.group.add(m.userData.blob); } return m; };
     this.locos = mk(legacy.locoGeo(), locoMat, 8);
     this.wagons = mk(legacy.wagonGeo(), wagMat, maxCars * 2);
-    this.loads = mk(oreLoadGeo(), wagMat, maxCars * 2);
+    this.loads = mk(oreLoadGeo(), wagMat, maxCars * 2, false);
     this.pax = mk(passengerCarGeo(), paxMat, 40);
     // ------------------------------------------------ schedule
     this.doy = dayOfYear();
@@ -372,7 +373,11 @@ export class Trains {
         if (s.run.stop && s.dt > s.run.stop - 1 && s.dt < s.run.stop + 0.2 * clockSpeed) { s.tr.at(s.head, p); if (!this._dep || this._dep !== key) { this._dep = key; this.sound.trainHorn(p[0], p[1] + 4, p[2], 1.0); } }
       }
     }
-    for (const [m, n] of [[this.locos, nl], [this.wagons, nw], [this.loads, nL], [this.pax, np]]) { m.count = off ? 0 : n; m.instanceMatrix.needsUpdate = true; }
+    for (const [m, n] of [[this.locos, nl], [this.wagons, nw], [this.loads, nL], [this.pax, np]]) {
+      m.count = off ? 0 : n; m.instanceMatrix.needsUpdate = true;
+      const bl = m.userData.blob;
+      if (bl) { bl.count = m.count; for (let i = 0; i < m.count; i++) { m.getMatrixAt(i, this.M); bl.setMatrixAt(i, this.M); } bl.instanceMatrix.needsUpdate = true; }
+    }
     this.lightsU.value = this.day.night > 0.3 ? 1 : 0;
     // ---- level crossings
     for (const c of this.crossings) {

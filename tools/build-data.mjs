@@ -1,6 +1,6 @@
 // Data pipeline: source/ (raw v4 data) -> data/ (compact runtime data).
 //
-//  * endireita e alinha as casas (cantos retos, paralelas à rua, recuo uniforme na quadra)
+//  * limpa as casas (cantos retos sem girar, nada invadindo rua/trilho/córrego, sem sobreposição)
 //  * alinha muros e portões com as ruas
 //  * classifica as árvores por espécie/contexto
 //  * empacota relevo + malhas das ruas num binário gzip (geo.bin.gz)
@@ -13,6 +13,7 @@ import zlib from 'node:zlib';
 import sharp from 'sharp';
 import { buildCreek } from './creek.mjs';
 import { buildWater } from './water.mjs';
+import { fixBuildings, corridorGrid, cutCorridors, bbox as bboxOf } from './buildings-fix.mjs';
 import {
   area, centroid, cleanRing, minAreaRect, extentsAt, diff90, rectPoly, rotate, selfIntersects,
   segPointDist, Grid, round, dist, pointInPoly,
@@ -70,198 +71,13 @@ function nearestRoad(x, z, maxD) {
 // Buildings: regularize footprints
 // ---------------------------------------------------------------------------------------------
 
-/** Snap every edge of p (rotated into the frame of angle t) to horizontal/vertical and rebuild the ring. */
-function orthogonalize(p, t) {
-  const q = rotate(p, -t);
-  let edges = [];
-  for (let i = 0; i < q.length; i++) {
-    const a = q[i], b = q[(i + 1) % q.length];
-    const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz);
-    const h = Math.abs(dx) >= Math.abs(dz);
-    edges.push({ h, c: h ? (a[1] + b[1]) / 2 : (a[0] + b[0]) / 2, len });
-  }
-  const mergeRuns = () => {
-    let changed = true;
-    while (changed && edges.length > 1) {
-      changed = false;
-      for (let i = 0; i < edges.length; i++) {
-        const e = edges[i], n = edges[(i + 1) % edges.length];
-        if (e.h === n.h && e !== n) {
-          const L = e.len + n.len || 1;
-          e.c = (e.c * e.len + n.c * n.len) / L; e.len = L;
-          edges.splice((i + 1) % edges.length, 1);
-          changed = true; break;
-        }
-      }
-    }
-  };
-  mergeRuns();
-  // drop tiny jogs (< 0.7 m) — they read as noise once extruded
-  for (let guard = 0; guard < 20; guard++) {
-    if (edges.length <= 4) break;
-    const verts = vertsOf(edges);
-    let idx = -1, minL = 0.7;
-    for (let i = 0; i < edges.length; i++) {
-      const a = verts[(i - 1 + edges.length) % edges.length], b = verts[i];
-      const L = dist(a, b);
-      if (L < minL) { minL = L; idx = i; }
-    }
-    if (idx < 0) break;
-    edges.splice(idx, 1);
-    mergeRuns();
-  }
-  if (edges.length < 4 || edges.length % 2) return null;
-  const v = vertsOf(edges);
-  return rotate(v, t);
-}
-function vertsOf(edges) {
-  // vertex i = intersection of edge i-1 and edge i
-  const out = [];
-  for (let i = 0; i < edges.length; i++) {
-    const a = edges[(i - 1 + edges.length) % edges.length], b = edges[i];
-    out.push(a.h ? [b.c, a.c] : [a.c, b.c]);
-  }
-  return out;
-}
-
-const stats = { rect: 0, ortho: 0, keep: 0, aligned: 0, setback: 0, pushedOffRoad: 0, shrunk: 0, dropped: 0 };
-const B = [];
-for (const b of C.buildings) {
-  let p = cleanRing(b.p);
-  if (p.length < 3) continue;
-  const A = area(p);
-  if (A < 6) { stats.dropped++; continue; }
-  const m = minAreaRect(p);
-  const rectness = A / m.area;
-  const [gx, gz] = centroid(p);
-  const road = nearestRoad(gx, gz, 40);
-  let t = m.t, aligned = false;
-  if (road) {
-    const dd = diff90(m.t, road.dir);
-    const tol = (road.d < 20 ? 24 : 15) * DEG;
-    if (Math.abs(dd) < tol) { t = m.t - dd; aligned = true; stats.aligned++; }
-  }
-  let poly = null, kind = 'rect';
-  const big = A > 400;
-  if (rectness > 0.83 || p.length <= 5) {
-    const e = extentsAt(p, t);
-    // keep the footprint area close to the original (snapping the angle inflates extents a bit)
-    const k = Math.sqrt(Math.min(1, Math.max(0.72, (m.a * m.b) / (e.a * e.b))));
-    poly = rectPoly(e.cx, e.cz, t, e.a * k, e.b * k);
-    stats.rect++;
-  } else {
-    const o = orthogonalize(p, t);
-    const ok = o && !selfIntersects(o) && Math.abs(area(o)) / A > 0.75 && Math.abs(area(o)) / A < 1.3;
-    if (ok) { poly = cleanRing(o, 0.02, 1); kind = 'ortho'; stats.ortho++; }
-    else if (big) { poly = p; kind = 'keep'; stats.keep++; }
-    else {
-      const e = extentsAt(p, t);
-      const k = Math.sqrt(Math.min(1, Math.max(0.72, A / (4 * e.a * e.b))));
-      poly = rectPoly(e.cx, e.cz, t, e.a * k, e.b * k); stats.rect++;
-    }
-  }
-  B.push({ src: b, p: poly, t, aligned, kind, road });
-}
-
-// --- uniform setbacks along each street side ---------------------------------------------------
-{
-  const groups = new Map();
-  for (const bd of B) {
-    if (!bd.aligned || !bd.road) continue;
-    const s = bd.road.seg;
-    const ux = (s.bx - s.ax) / s.L, uz = (s.bz - s.az) / s.L;
-    const nx = -uz, nz = ux;
-    // signed distance of every vertex to the (infinite) road centerline
-    let dmin = 1e9, side = 0;
-    const [cx, cz] = centroid(bd.p);
-    side = Math.sign((cx - s.ax) * nx + (cz - s.az) * nz) || 1;
-    for (const [x, z] of bd.p) {
-      const d = ((x - s.ax) * nx + (z - s.az) * nz) * side;
-      if (d < dmin) dmin = d;
-    }
-    const front = dmin - s.hw; // gap between road edge and facade
-    if (front > 9 || front < -3) continue;
-    const along = s.i * 1000 + ((cx - s.ax) * ux + (cz - s.az) * uz); // segment-major ordering
-    const key = s.r.id + ':' + side;
-    let g = groups.get(key); if (!g) groups.set(key, g = []);
-    g.push({ bd, front, along, nx: nx * side, nz: nz * side, seg: s });
-  }
-  const SIDEWALK = 1.4; // keep facades off the curb/sidewalk strip
-  for (const g of groups.values()) {
-    g.sort((a, b) => a.along - b.along);
-    // cluster consecutive houses of the same block (gap along road < 28 m, same segment run)
-    const clusters = [];
-    let cur = [];
-    for (const it of g) {
-      if (cur.length && (Math.abs(it.along - cur[cur.length - 1].along) > 28)) { clusters.push(cur); cur = []; }
-      cur.push(it);
-    }
-    if (cur.length) clusters.push(cur);
-    for (const cl of clusters) {
-      const fr = cl.map(c => c.front).sort((a, b) => a - b);
-      const med = Math.max(SIDEWALK, fr[fr.length >> 1]);
-      for (const it of cl) {
-        let target = it.front;
-        if (cl.length >= 3 && Math.abs(it.front - med) < 1.8) target = med;
-        if (target < SIDEWALK) target = Math.min(SIDEWALK, it.front + 3);
-        const shift = target - it.front;
-        if (Math.abs(shift) < 0.05) continue;
-        it.bd.p = it.bd.p.map(([x, z]) => [x + it.nx * shift, z + it.nz * shift]);
-        if (it.front < SIDEWALK) stats.pushedOffRoad++; else stats.setback++;
-      }
-    }
-  }
-}
-
-// --- resolve overlaps between neighbours ------------------------------------------------------
-{
-  const g = new Grid(30);
-  B.forEach((bd, i) => {
-    bd.i = i;
-    let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
-    for (const [x, z] of bd.p) { x0 = Math.min(x0, x); z0 = Math.min(z0, z); x1 = Math.max(x1, x); z1 = Math.max(z1, z); }
-    bd.box = [x0, z0, x1, z1];
-    g.addBox(bd, x0, z0, x1, z1);
-  });
-  const frame = (p, t) => {
-    const ux = Math.cos(t), uz = Math.sin(t);
-    let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
-    for (const [x, z] of p) {
-      const u = x * ux + z * uz, v = -x * uz + z * ux;
-      u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
-    }
-    return { u0, u1, v0, v1 };
-  };
-  for (const a of B) {
-    if (a.dead || a.p.length !== 4) continue;
-    const [x0, z0, x1, z1] = a.box;
-    for (const b of g.query((x0 + x1) / 2, (z0 + z1) / 2, Math.max(x1 - x0, z1 - z0) / 2 + 2)) {
-      if (b === a || b.dead || b.i < a.i || b.p.length !== 4) continue;
-      if (Math.abs(diff90(a.t, b.t)) > 3 * DEG) continue;
-      const fa = frame(a.p, a.t), fb = frame(b.p, a.t);
-      const ou = Math.min(fa.u1, fb.u1) - Math.max(fa.u0, fb.u0);
-      const ov = Math.min(fa.v1, fb.v1) - Math.max(fa.v0, fb.v0);
-      if (ou <= 0.02 || ov <= 0.02) continue;
-      const aA = (fa.u1 - fa.u0) * (fa.v1 - fa.v0), aB = (fb.u1 - fb.u0) * (fb.v1 - fb.v0);
-      const small = aA < aB ? a : b, big = small === a ? b : a;
-      if (ou * ov > 0.6 * Math.min(aA, aB)) { small.dead = true; stats.dropped++; continue; }
-      // shrink the smaller one along the axis of least penetration
-      const fs = small === a ? fa : fb, fbg = small === a ? fb : fa;
-      let { u0, u1, v0, v1 } = fs;
-      if (ou < ov) { if ((u0 + u1) / 2 < (fbg.u0 + fbg.u1) / 2) u1 -= ou + 0.06; else u0 += ou + 0.06; }
-      else { if ((v0 + v1) / 2 < (fbg.v0 + fbg.v1) / 2) v1 -= ov + 0.06; else v0 += ov + 0.06; }
-      if (u1 - u0 < 2 || v1 - v0 < 2) { small.dead = true; stats.dropped++; continue; }
-      const t = a.t, ux = Math.cos(t), uz = Math.sin(t);
-      const P = (u, v) => [u * ux - v * uz, u * uz + v * ux];
-      small.p = [P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)];
-      stats.shrunk++;
-    }
-  }
-}
-
+// Conservative: every house keeps its own position and orientation (only tiny < 6° snaps), square
+// corners only when the shape stays the same, and whatever invades the street / railway is cut at the
+// kerb. Duplicated and overlapping footprints are removed / separated. See tools/buildings-fix.mjs.
+const skipRoad = new Set([...viadIds, 1314627853, 1314627854, 1314627855, ...C.roads.filter(r => r.b).map(r => r.id)]);
+const fixed = fixBuildings(C.buildings, C.roads, { rail: C.rail, skipRoadIds: skipRoad });
 const buildings = [];
-for (const bd of B) {
-  if (bd.dead) continue;
+for (const bd of fixed.list) {
   const s = bd.src;
   let p = bd.p;
   if (area(p) < 0) p = p.slice().reverse();
@@ -272,7 +88,7 @@ for (const bd of B) {
     t: round(bd.t, 4), k: bd.kind === 'rect' ? undefined : bd.kind,
   });
 }
-log('buildings', C.buildings.length, '->', buildings.length, stats);
+log('buildings', C.buildings.length, '->', buildings.length, fixed.stats);
 
 // ---------------------------------------------------------------------------------------------
 // Walls & gates: rotate into line with the street grid
@@ -286,7 +102,7 @@ function alignSegs(list) {
     const r = nearestRoad(mx, mz, 30);
     if (!r || L < 0.3) return w.map(v => typeof v === 'number' ? round(v) : v);
     const d = diff90(a, r.dir);
-    if (Math.abs(d) > 14 * DEG) return w.map(v => typeof v === 'number' ? round(v) : v);
+    if (Math.abs(d) > 6 * DEG) return w.map(v => typeof v === 'number' ? round(v) : v);
     n++;
     const t = a - d, hx = Math.cos(t) * L / 2, hz = Math.sin(t) * L / 2;
     return [round(mx - hx), round(mz - hz), round(mx + hx), round(mz + hz), ...w.slice(4)];
@@ -303,7 +119,10 @@ const walls = alignSegs(C.walls), gates = alignSegs(C.gates || []);
     g.addBox(b, x0, z0, x1, z1);
   }
   const inside = (x, z) => { for (const b of g.query(x, z, 1)) if (pointInPoly(x, z, b.p)) return true; return false; };
-  const keep = w => !inside((w[0] + w[2]) / 2, (w[1] + w[3]) / 2);
+  // ... and pieces standing on the carriageway
+  const rg = corridorGrid(C.roads, [], [], skipRoad);
+  const onRoad = (x, z) => { for (const s of rg.query(x, z, 8)) if (segPointDist(x, z, s.ax, s.az, s.bx, s.bz).d < s.hw - 0.45) return true; return false; };
+  const keep = w => { const mx = (w[0] + w[2]) / 2, mz = (w[1] + w[3]) / 2; return !inside(mx, mz) && !onRoad(mx, mz) && !onRoad(w[0], w[1]) && !onRoad(w[2], w[3]); };
   const n0 = walls.length;
   C.walls = walls.filter(keep);
   C.gates = gates.filter(keep);
@@ -334,6 +153,14 @@ const trees = C.trees.map((t, i) => {
   return [round(x, 1), round(z, 1), round(size, 1), seed, s];
 });
 log('tree species', sp);
+// trees standing inside a house (footprints moved/cut) go away
+{
+  const g = new Grid(30);
+  for (const b of buildings) { const [x0, z0, x1, z1] = bboxOf(b.p); g.addBox(b, x0, z0, x1, z1); }
+  const n0 = trees.length;
+  for (let k = trees.length - 1; k >= 0; k--) { const [x, z] = trees[k]; for (const b of g.query(x, z, 1)) if (pointInPoly(x, z, b.p)) { trees.splice(k, 1); break; } }
+  log('trees inside houses removed', n0 - trees.length);
+}
 
 // ---------------------------------------------------------------------------------------------
 // Córrego (creek): smooth, classify, carve into the height grid
@@ -410,6 +237,18 @@ const creeks = [];
   }
   log('trees removed from creek beds', n0 - trees.length);
   creek = creeks[0] || null;
+  // houses must not stand in the creek bed / on the canal walls either
+  {
+    const st = {};
+    const items = buildings.map(b => ({ b, p: b.p, A0: Math.abs(area(b.p)), kind: b.k || 'rect' }));
+    const keep = new Set(cutCorridors(items, corridorGrid([], [], creeks), st));
+    for (let k = buildings.length - 1; k >= 0; k--) {
+      const it = items[k];
+      if (!keep.has(it)) { buildings.splice(k, 1); continue; }
+      if (it.p !== it.b.p) { it.b.p = it.p.map(([x, z]) => [round(x), round(z)]); it.b.k = it.kind === 'rect' ? undefined : it.kind; }
+    }
+    log('buildings vs creeks', st, '->', buildings.length);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -562,6 +401,214 @@ const city = {
 };
 fs.writeFileSync(path.join(OUT, 'city.json'), JSON.stringify(city));
 
+
+// ---------------------------------------------------------------------------------------------
+// No street in town is a dirt road: every street with houses is paralelepípedo (granite setts).
+// The dirt mesh triangles of those streets move to the paver mesh, and they get meio-fio + calçada.
+// Only rural trails without houses stay dirt.
+// ---------------------------------------------------------------------------------------------
+function paveDirtStreets(meshArr) {
+  const bg = new Grid(30);
+  for (const b of city.buildings) { const [x0, z0, x1, z1] = bboxOf(b.p); bg.addBox(b, x0, z0, x1, z1); }
+  const housesNear = (r, R) => {
+    const seen = new Set();
+    for (let i = 0; i < r.p.length; i++) {
+      const a = r.p[i], c = r.p[Math.min(i + 1, r.p.length - 1)];
+      const L = Math.hypot(c[0] - a[0], c[1] - a[1]);
+      for (let t = 0; t <= L; t += 10) { const x = a[0] + (c[0] - a[0]) * t / (L || 1), z = a[1] + (c[1] - a[1]) * t / (L || 1); for (const b of bg.query(x, z, R)) seen.add(b); }
+    }
+    return seen.size;
+  };
+  const paved = new Set();
+  for (const r of city.roads) {
+    if (r.s !== 'dirt') continue;
+    const urban = ['residential', 'unclassified', 'service', 'tertiary', 'footway', 'living_street'].includes(r.hw) || housesNear(r, 35) >= 3;
+    if (!urban || housesNear(r, 60) === 0) continue;
+    r.s = 'paver'; paved.add(r.id);
+  }
+  // nearest road centreline for every dirt triangle
+  const rg = new Grid(25);
+  for (const r of city.roads) for (let i = 0; i < r.p.length - 1; i++) { const a = r.p[i], c = r.p[i + 1]; rg.addBox({ r, a, c }, Math.min(a[0], c[0]), Math.min(a[1], c[1]), Math.max(a[0], c[0]), Math.max(a[1], c[1])); }
+  const nearestRoadOf = (x, z) => { let best = null, bd = 1e9; for (const s of rg.query(x, z, 12)) { const d = segPointDist(x, z, s.a[0], s.a[1], s.c[0], s.c[1]).d - (s.r.w || 6) / 2; if (d < bd) { bd = d; best = s.r; } } return best; };
+  const md = meshArr.m_dirt, ad = meshArr.a_dirt;
+  const keepM = [], keepA = [], movM = [], movA = [];
+  for (let t = 0; t < md.length / 6; t++) {
+    const cx = (md[t * 6] + md[t * 6 + 2] + md[t * 6 + 4]) / 3, cz = (md[t * 6 + 1] + md[t * 6 + 3] + md[t * 6 + 5]) / 3;
+    const r = nearestRoadOf(cx, cz);
+    // only rural trails stay dirt; junction pieces next to a paved street are paved too
+    const to = r && r.s === 'dirt' ? [keepM, keepA] : [movM, movA];
+    for (let k = 0; k < 6; k++) to[0].push(md[t * 6 + k]);
+    to[1].push(ad ? ad[t] : 0);
+  }
+  const cat = (a, b) => { const o = new Float32Array(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
+  meshArr.m_paver = cat(meshArr.m_paver, movM); meshArr.a_paver = cat(meshArr.a_paver, movA);
+  meshArr.m_dirt = new Float32Array(keepM); meshArr.a_dirt = new Float32Array(keepA);
+  // meio-fio + calçada along the newly paved streets (not where another street, a house or water is)
+  const others = new Grid(25);
+  for (const r of city.roads) { if (['path', 'footway', 'steps'].includes(r.hw)) continue; for (let i = 0; i < r.p.length - 1; i++) { const a = r.p[i], c = r.p[i + 1], hw = (r.w || 6) / 2; others.addBox({ r, a, c, hw }, Math.min(a[0], c[0]) - hw, Math.min(a[1], c[1]) - hw, Math.max(a[0], c[0]) + hw, Math.max(a[1], c[1]) + hw); } }
+  const inOtherRoad = (x, z, self, pad) => { for (const s of others.query(x, z, 10)) { if (s.r === self) continue; if (segPointDist(x, z, s.a[0], s.a[1], s.c[0], s.c[1]).d < s.hw + pad) return true; } return false; };
+  const nearHouse = (x, z, pad) => { for (const b of bg.query(x, z, pad + 1)) { if (pointInPoly(x, z, b.p)) return true; for (let i = 0; i < b.p.length; i++) { const a = b.p[i], c = b.p[(i + 1) % b.p.length]; if (segPointDist(x, z, a[0], a[1], c[0], c[1]).d < pad) return true; } } return false; };
+  const cg = corridorGrid([], [], city.creeks || []);
+  const inCreek = (x, z) => { for (const s of cg.query(x, z, 6)) if (segPointDist(x, z, s.ax, s.az, s.bx, s.bz).d < s.hw + 0.3) return true; return false; };
+  const sw = [];
+  let nCurb = 0;
+  for (const r of city.roads) {
+    if (!paved.has(r.id) || ['footway', 'path', 'service'].includes(r.hw)) continue;
+    const hw = (r.w || 6) / 2;
+    for (let i = 0; i < r.p.length - 1; i++) {
+      const [ax, az] = r.p[i], [bx, bz] = r.p[i + 1];
+      const L = Math.hypot(bx - ax, bz - az); if (L < 1) continue;
+      const ux = (bx - ax) / L, uz = (bz - az) / L, nx = -uz, nz = ux;
+      const n = Math.max(1, Math.round(L / 2.5));
+      for (const side of [-1, 1]) {
+        for (let k = 0; k < n; k++) {
+          const t0 = L * k / n, t1 = L * (k + 1) / n, tm = (t0 + t1) / 2;
+          const mx = ax + ux * tm + nx * side * (hw + 0.6), mz = az + uz * tm + nz * side * (hw + 0.6);
+          if (mx < M.XMIN + 6 || mx > M.XMAX - 6 || mz < M.ZMIN + 6 || mz > M.ZMAX - 6) continue; // inside the map only
+          if (inOtherRoad(mx, mz, r, 1.2) || nearHouse(ax + ux * tm + nx * side * hw, az + uz * tm + nz * side * hw, 0.3) || inCreek(mx, mz)) continue;
+          const P = (t, o) => [ax + ux * t + nx * side * o, az + uz * t + nz * side * o];
+          const c0 = P(t0, hw), c1 = P(t1, hw);
+          C.curbs.push([round(c0[0]), round(c0[1]), round(c1[0]), round(c1[1])]); nCurb++;
+          // calçada: up to 1.5 m, narrower where a house front is closer
+          let w = 1.5;
+          while (w > 0.6 && (nearHouse(...P(t0, hw + w), 0.05) || nearHouse(...P(t1, hw + w), 0.05) || nearHouse(...P(tm, hw + w), 0.05))) w -= 0.3;
+          if (w <= 0.6) continue;
+          const a0 = P(t0, hw + 0.08), a1 = P(t1, hw + 0.08), b0 = P(t0, hw + w), b1 = P(t1, hw + w);
+          sw.push(...a0, ...a1, ...b1, ...a0, ...b1, ...b0);
+        }
+      }
+    }
+  }
+  meshArr.m_sidewalk = cat(meshArr.m_sidewalk, sw);
+  city.curbs = C.curbs.map(c => c.map(v => round(v)));
+  log('paved dirt streets', paved.size, 'triangles moved', movA.length, 'kept dirt', keepA.length, 'new curbs', nCurb, 'sidewalk tris', sw.length / 6);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Rotatória at the start of Rua Triângulo (by the viaduto do Centro): OpenStreetMap has it as a
+// triangle of three short streets, but it is a round roundabout. The triangle legs are replaced by
+// a one-way ring (anticlockwise, Brazilian rule), the approaches are cut at the ring, and the road
+// surface inside the outer circle is rebuilt as an asphalt annulus around a grass island.
+// ---------------------------------------------------------------------------------------------
+function makeRoundabouts(meshArr) {
+  const RBS = [{ tri: [309440549, 309440550, 756409976], ids: [309440550], R: 8.5, w: 7, id: 9100000001 }];
+  city.roundabouts = [];
+  for (const rb of RBS) {
+    // centre = centroid of the triangle's three corner vertices
+    const legs = city.roads.filter(r => rb.tri.includes(r.id));
+    const conn = legs.find(r => r.id === rb.ids[0]);
+    if (!conn) continue;
+    const B = conn.p[0], Cc = conn.p[conn.p.length - 1];
+    const bal = legs.find(r => r.id === 309440549), A = bal.p[0];
+    const cx = (A[0] + B[0] + Cc[0]) / 3, cz = (A[1] + B[1] + Cc[1]) / 3;
+    const R = rb.R, Rin = R - rb.w / 2, Rout = R + rb.w / 2;
+    const inC = (p, r) => Math.hypot(p[0] - cx, p[1] - cz) < r;
+    // ---- roads: drop the third leg, cut every road at the ring centreline, collect attach angles
+    city.roads = city.roads.filter(r => !rb.ids.includes(r.id));
+    const attach = [];
+    const out = [];
+    for (const r of city.roads) {
+      if (!r.p.some(p => Math.hypot(p[0] - cx, p[1] - cz) < Rout + 2) && !r.p.some((p, i) => i && segPointDist(cx, cz, r.p[i - 1][0], r.p[i - 1][1], p[0], p[1]).d < R)) { out.push(r); continue; }
+      if (['footway', 'path', 'steps'].includes(r.hw)) { out.push(r); continue; }
+      // split the polyline into the parts outside the circle of radius R
+      const pieces = []; let cur = [];
+      const hit = (a, b) => { // intersection of segment a-b with the circle, parameter t in (0,1)
+        const dx = b[0] - a[0], dz = b[1] - a[1], fx = a[0] - cx, fz = a[1] - cz;
+        const A2 = dx * dx + dz * dz, B2 = 2 * (fx * dx + fz * dz), C2 = fx * fx + fz * fz - R * R, D = B2 * B2 - 4 * A2 * C2;
+        if (D < 0 || A2 < 1e-9) return [];
+        const q = Math.sqrt(D); return [(-B2 - q) / (2 * A2), (-B2 + q) / (2 * A2)].filter(t => t > 0 && t < 1).sort((x, y) => x - y);
+      };
+      for (let i = 0; i < r.p.length; i++) {
+        const p = r.p[i];
+        if (i > 0) {
+          const a = r.p[i - 1];
+          for (const t of hit(a, p)) {
+            const q = [a[0] + (p[0] - a[0]) * t, a[1] + (p[1] - a[1]) * t];
+            if (cur.length) { cur.push(q); pieces.push(cur); cur = []; attach.push(q); }
+            else { cur = [q]; attach.push(q); }
+          }
+        }
+        if (!inC(p, R)) cur.push(p);
+      }
+      if (cur.length) pieces.push(cur);
+      const good = pieces.filter(pc => pc.length >= 2 && pc.reduce((L, q, i) => i ? L + Math.hypot(q[0] - pc[i - 1][0], q[1] - pc[i - 1][1]) : 0, 0) > 1);
+      good.forEach((pc, k) => out.push({ ...r, id: k ? r.id * 10 + k : r.id, p: pc.map(q => [round(q[0]), round(q[1])]) }));
+    }
+    city.roads = out;
+    // ---- the ring: anticlockwise seen from above with north up (x east, z south)
+    const angs = [];
+    for (let k = 0; k < 32; k++) angs.push(k / 32 * Math.PI * 2);
+    const att = attach.map(q => Math.atan2(-(q[1] - cz), q[0] - cx)).map(a => (a + Math.PI * 2) % (Math.PI * 2));
+    const all = angs.filter(a => att.every(b => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) > 0.08)).concat(att).sort((x, y) => x - y);
+    const ringP = all.map(a => [round(cx + R * Math.cos(a)), round(cz - R * Math.sin(a))]);
+    // attach points must match the ring vertices exactly (the traffic graph joins equal points)
+    for (const r of city.roads) for (const k of [0, r.p.length - 1]) {
+      const p = r.p[k];
+      if (Math.abs(Math.hypot(p[0] - cx, p[1] - cz) - R) < 0.05) { let best = null, bd = 1e9; for (const q of ringP) { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; best = q; } } r.p[k] = [best[0], best[1]]; }
+    }
+    ringP.push(ringP[0]);
+    city.roads.push({ id: rb.id, hw: 'tertiary', s: 'asphalt', s0: 'asphalt', w: rb.w, n: 'Rotatória da Rua Triângulo', o: true, b: false, ring: true, p: ringP });
+    // ---- road surfaces: cut everything inside the outer circle, add the asphalt annulus
+    const NK = 64, Rk = Rout / Math.cos(Math.PI / NK); // circumscribed polygon
+    const K = []; for (let k = 0; k < NK; k++) { const a = (k + 0.5) / NK * Math.PI * 2; K.push([cx + Rk * Math.cos(a), cz + Rk * Math.sin(a)]); }
+    const clip = (poly, ax, az, nx, nz, keepOut) => { // keep side where (p-a)·n >= 0 (keepOut) or <= 0
+      const res = [], f = q => ((q[0] - ax) * nx + (q[1] - az) * nz) * (keepOut ? 1 : -1);
+      for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length], fa = f(a), fb = f(b); if (fa >= 0) res.push(a); if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); res.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); } }
+      return res;
+    };
+    let nCut = 0;
+    for (const kind of ['asphalt', 'paver', 'dirt', 'sidewalk']) {
+      const m = meshArr['m_' + kind], an = meshArr['a_' + kind];
+      if (!m) continue;
+      const nm = [], na = [];
+      for (let t = 0; t < m.length / 6; t++) {
+        const tri = [[m[t * 6], m[t * 6 + 1]], [m[t * 6 + 2], m[t * 6 + 3]], [m[t * 6 + 4], m[t * 6 + 5]]];
+        const near = tri.some(p => Math.hypot(p[0] - cx, p[1] - cz) < Rk + 0.5) || segPointDist(cx, cz, tri[0][0], tri[0][1], tri[1][0], tri[1][1]).d < Rk || segPointDist(cx, cz, tri[1][0], tri[1][1], tri[2][0], tri[2][1]).d < Rk || segPointDist(cx, cz, tri[2][0], tri[2][1], tri[0][0], tri[0][1]).d < Rk;
+        if (!near) { for (let k = 0; k < 6; k++) nm.push(m[t * 6 + k]); if (an) na.push(an[t]); continue; }
+        nCut++;
+        // tri \ K = union over edges i of (tri ∩ outside(edge i) ∩ inside(edges < i))
+        for (let i = 0; i < NK; i++) {
+          const a = K[i], b = K[(i + 1) % NK];
+          const ex = b[0] - a[0], ez = b[1] - a[1], L = Math.hypot(ex, ez), nx = ez / L, nz = -ex / L; // normal; orient outward
+          const sgn = ((a[0] - cx) * nx + (a[1] - cz) * nz) > 0 ? 1 : -1;
+          let poly = clip(tri, a[0], a[1], nx * sgn, nz * sgn, true);
+          for (let j = 0; j < i && poly.length >= 3; j++) {
+            const c0 = K[j], c1 = K[(j + 1) % NK], fx = c1[0] - c0[0], fz = c1[1] - c0[1], l2 = Math.hypot(fx, fz), mx = fz / l2, mz = -fx / l2;
+            const sg = ((c0[0] - cx) * mx + (c0[1] - cz) * mz) > 0 ? 1 : -1;
+            poly = clip(poly, c0[0], c0[1], mx * sg, mz * sg, false);
+          }
+          if (poly.length < 3) continue;
+          for (let k = 1; k < poly.length - 1; k++) {
+            const p0 = poly[0], p1 = poly[k], p2 = poly[k + 1];
+            if (Math.abs((p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0])) < 1e-4) continue;
+            nm.push(p0[0], p0[1], p1[0], p1[1], p2[0], p2[1]); if (an) na.push(an[t]);
+          }
+        }
+      }
+      meshArr['m_' + kind] = new Float32Array(nm); if (an) meshArr['a_' + kind] = new Float32Array(na);
+    }
+    // asphalt annulus (Rin .. Rout); texture runs along the ring
+    const am = Array.from(meshArr.m_asphalt), aa = Array.from(meshArr.a_asphalt);
+    for (let k = 0; k < NK; k++) {
+      const a0 = (k + 0.5) / NK * Math.PI * 2, a1 = (k + 1.5) / NK * Math.PI * 2;
+      const P = (r, a) => [cx + r * Math.cos(a), cz + r * Math.sin(a)];
+      const o0 = P(Rk, a0), o1 = P(Rk, a1), i0 = P(Rin, a0), i1 = P(Rin, a1);
+      am.push(...o0, ...o1, ...i1, ...o0, ...i1, ...i0);
+      const tang = (a0 + a1) / 2 + Math.PI / 2;
+      aa.push(tang, tang);
+    }
+    meshArr.m_asphalt = new Float32Array(am); meshArr.a_asphalt = new Float32Array(aa);
+    // curbs, walls, gates, trees and houses inside the outer circle go away
+    city.curbs = city.curbs.filter(c => !inC([(c[0] + c[2]) / 2, (c[1] + c[3]) / 2], Rout + 0.3));
+    city.walls = city.walls.filter(w => !inC([(w[0] + w[2]) / 2, (w[1] + w[3]) / 2], Rout + 1));
+    city.gates = city.gates.filter(w => !inC([(w[0] + w[2]) / 2, (w[1] + w[3]) / 2], Rout + 1));
+    city.trees = city.trees.filter(t => !inC(t, Rout + 1));
+    city.trees.push([round(cx, 1), round(cz, 1), 4.5, 777, 3]); // a coqueiro in the island
+    city.buildings = city.buildings.filter(b => !b.p.some(p => inC(p, Rout + 0.5)));
+    city.roundabouts.push({ c: [round(cx), round(cz)], R, rin: Rin, rout: Rout });
+    log('rotatória', [round(cx), round(cz)], 'R', R, 'attach', attach.length, 'ring pts', ringP.length, 'surface tris cut', nCut);
+  }
+}
 // ---------------------------------------------------------------------------------------------
 // geo.bin.gz — height grid, backdrop grid, road surface meshes
 // ---------------------------------------------------------------------------------------------
@@ -584,15 +631,19 @@ const back = new Uint16Array(bbuf.buffer.slice(bbuf.byteOffset, bbuf.byteOffset 
 const water = await buildWater(path.join(SRC, 'backtex.jpg'), back, C.meta);
 log('water bodies', water.bodies.map(b => [b.level, b.n]), 'flattened cells', water.flat);
 city.water = { bodies: water.bodies, maskSize: water.maskSize, R: 3600 };
-fs.writeFileSync(path.join(OUT, 'city.json'), JSON.stringify(city));
 const mbuf = fs.readFileSync(path.join(SRC, 'meshes.f32'));
+const meshArr = {};
+for (const [k, [off, n]] of Object.entries(C.meshes)) meshArr[k] = new Float32Array(mbuf.buffer.slice(mbuf.byteOffset + off, mbuf.byteOffset + off + n * 4));
+paveDirtStreets(meshArr);
+makeRoundabouts(meshArr);
+fs.writeFileSync(path.join(OUT, 'city.json'), JSON.stringify(city));
 const sections = [];
 sections.push({ name: 'height', type: 'i16d', w: C.meta.GW, h: C.meta.GH, data: deltaRows(height, C.meta.GW, C.meta.GH) });
 sections.push({ name: 'back', type: 'i16d', w: C.meta.BG, h: C.meta.BG, data: deltaRows(back, C.meta.BG, C.meta.BG) });
 sections.push({ name: 'watermask', type: 'u8', w: water.maskSize, h: water.maskSize, data: water.mask });
-for (const [k, [off, n]] of Object.entries(C.meshes)) {
+for (const [k, f] of Object.entries(meshArr)) {
+  const n = f.length;
   if (!n) continue;
-  const f = new Float32Array(mbuf.buffer.slice(mbuf.byteOffset + off, mbuf.byteOffset + off + n * 4));
   if (k.startsWith('m_')) {
     const q = new Int16Array(n);
     for (let i = 0; i < n; i++) q[i] = Math.round(f[i] * 20); // 5 cm grid

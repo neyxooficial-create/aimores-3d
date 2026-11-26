@@ -20,6 +20,109 @@ const pick = (list, r) => { let t = r * list.reduce((s, x) => s + x[1], 0); for 
 
 function polyArea(p) { let a = 0; for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; a += p[i][0] * q[1] - q[0] * p[i][1]; } return a / 2; }
 
+/** dominant edge direction of a footprint (length-weighted, modulo 90°) */
+function frameAngle(P) {
+  let sx = 0, sy = 0;
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i], b = P[(i + 1) % P.length];
+    const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
+    const ang = Math.atan2(dz, dx) * 4;
+    sx += Math.cos(ang) * L; sy += Math.sin(ang) * L;
+  }
+  return Math.atan2(sy, sx) / 4;
+}
+/**
+ * Classify a footprint for the roof: 'rect' (4 square corners), 'rects' (rectilinear L/T/U,
+ * decomposed into rectangles), 'convex' (e.g. a rectangle with a corner cut by the street) or 'other'.
+ */
+function footprintShape(P, t) {
+  const c = Math.cos(t), s = Math.sin(t);
+  const Q = P.map(([x, z]) => [x * c + z * s, -x * s + z * c]);
+  let rectil = true;
+  for (let i = 0; i < Q.length; i++) {
+    const a = Q[i], b = Q[(i + 1) % Q.length];
+    const dx = Math.abs(b[0] - a[0]), dz = Math.abs(b[1] - a[1]);
+    if (Math.min(dx, dz) > Math.max(dx, dz) * 0.06 && Math.min(dx, dz) > 0.12) { rectil = false; break; }
+  }
+  const toWorld = (u0, u1, v0, v1) => { const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2; return { cx: cu * c - cv * s, cz: cu * s + cv * c, a: (u1 - u0) / 2, b: (v1 - v0) / 2 }; };
+  if (rectil) {
+    const us = [...new Set(Q.map(q => Math.round(q[0] * 20) / 20))].sort((x, y) => x - y);
+    const vs = [...new Set(Q.map(q => Math.round(q[1] * 20) / 20))].sort((x, y) => x - y);
+    const merge = arr => arr.filter((v, i) => i === 0 || v - arr[i - 1] > 0.3);
+    const U = merge(us), V = merge(vs);
+    if (U.length === 2 && V.length === 2) return { kind: 'rect', rects: [toWorld(U[0], U[1], V[0], V[1])] };
+    if (U.length <= 12 && V.length <= 12) {
+      const inside = (u, v) => { let ins = false; for (let i = 0, j = Q.length - 1; i < Q.length; j = i++) if ((Q[i][1] > v) !== (Q[j][1] > v) && u < (Q[j][0] - Q[i][0]) * (v - Q[i][1]) / (Q[j][1] - Q[i][1]) + Q[i][0]) ins = !ins; return ins; };
+      const nu = U.length - 1, nv = V.length - 1;
+      const decompose = uFirst => {
+        const cell = []; for (let i = 0; i < nu; i++) { cell.push([]); for (let j = 0; j < nv; j++) cell[i].push(inside((U[i] + U[i + 1]) / 2, (V[j] + V[j + 1]) / 2)); }
+        const used = cell.map(r => r.map(() => false));
+        const out = [];
+        for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
+          if (!cell[i][j] || used[i][j]) continue;
+          let i1 = i, j1 = j;
+          if (uFirst) {
+            while (i1 + 1 < nu && cell[i1 + 1][j] && !used[i1 + 1][j]) i1++;
+            let ok = true; while (ok && j1 + 1 < nv) { for (let k = i; k <= i1; k++) if (!cell[k][j1 + 1] || used[k][j1 + 1]) ok = false; if (ok) j1++; }
+          } else {
+            while (j1 + 1 < nv && cell[i][j1 + 1] && !used[i][j1 + 1]) j1++;
+            let ok = true; while (ok && i1 + 1 < nu) { for (let k = j; k <= j1; k++) if (!cell[i1 + 1][k] || used[i1 + 1][k]) ok = false; if (ok) i1++; }
+          }
+          for (let a = i; a <= i1; a++) for (let b = j; b <= j1; b++) used[a][b] = true;
+          out.push(toWorld(U[i], U[i1 + 1], V[j], V[j1 + 1]));
+        }
+        return out;
+      };
+      const d1 = decompose(true), d2 = decompose(false);
+      const best = d1.length <= d2.length ? d1 : d2;
+      // tiny wings (< 1.2 m) make silly roofs: fall back to a flat roof then
+      if (best.length && best.length <= 6 && best.every(r => Math.min(r.a, r.b) > 0.6)) return { kind: best.length === 1 ? 'rect' : 'rects', rects: best };
+    }
+    return { kind: 'other' };
+  }
+  // convex?
+  let sg = 0;
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i], b = P[(i + 1) % P.length], d = P[(i + 2) % P.length];
+    const cr = (b[0] - a[0]) * (d[1] - b[1]) - (b[1] - a[1]) * (d[0] - b[0]);
+    if (Math.abs(cr) < 1e-4) continue;
+    if (!sg) sg = Math.sign(cr); else if (Math.sign(cr) !== sg) return { kind: 'other' };
+  }
+  return { kind: 'convex' };
+}
+/** offset a polygon (positive area = CCW in x/z) outwards by d (inwards for d < 0) */
+function offsetPoly(P, d) {
+  const n = P.length, lines = [];
+  for (let i = 0; i < n; i++) {
+    const a = P[i], b = P[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const ex = (b[0] - a[0]) / L, ez = (b[1] - a[1]) / L, nx = ez, nz = -ex; // outward normal
+    lines.push({ px: a[0] + nx * d, pz: a[1] + nz * d, ex, ez });
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const l0 = lines[(i - 1 + n) % n], l1 = lines[i];
+    const den = l0.ex * l1.ez - l0.ez * l1.ex;
+    if (Math.abs(den) < 1e-6) { out.push([l1.px, l1.pz]); continue; }
+    const tt = ((l1.px - l0.px) * l1.ez - (l1.pz - l0.pz) * l1.ex) / den;
+    out.push([l0.px + l0.ex * tt, l0.pz + l0.ez * tt]);
+  }
+  // reject if any edge flipped direction (offset too large)
+  for (let i = 0; i < n; i++) {
+    const a = out[i], b = out[(i + 1) % n], c = P[i], e = P[(i + 1) % n];
+    if ((b[0] - a[0]) * (e[0] - c[0]) + (b[1] - a[1]) * (e[1] - c[1]) <= 0) return null;
+  }
+  return out;
+}
+/** largest inset (≤ dMax) of a convex polygon that stays valid; returns { p, d } */
+function insetConvex(P, dMax) {
+  let d = dMax * 0.95;
+  for (let k = 0; k < 10; k++, d *= 0.8) {
+    const q = offsetPoly(P, -d);
+    if (q) return { p: q, d };
+  }
+  return null;
+}
+
 export function buildBuildings(city, T, opts = {}) {
   const Q = opts.quality || 'high';
   const skip = opts.skip || (() => false);
@@ -122,7 +225,7 @@ export function buildBuildings(city, T, opts = {}) {
     if (hasSign || (centro && (frontMain || h0 < 0.45) && setback < 3)) style = 'shop';
     else if (/Esta/i.test(B.osm || '')) style = 'antiga';
     else if (centro && h1 < 0.22) style = 'antiga';
-    else if (B.k === 'ortho' || h1 < (centro ? 0.38 : 0.2) || big) style = 'moderna';
+    else if (h1 < (centro ? 0.38 : 0.2) || big) style = 'moderna';
     else if (['Sossego', 'Vila Tiago', 'Industrial', 'Triângulo', 'Barra Preta', 'Vila Fonseca'].includes(nb) && h1 < 0.52) style = 'simples';
     else style = 'padrao';
     if (B.rm === 'metal' && A > 350) style = 'galpao';
@@ -267,8 +370,8 @@ export function buildBuildings(city, T, opts = {}) {
       } else boxT((ax + bx) / 2 + nx * d / 2, py, (az + bz) / 2 + nz * d / 2, (w1 - w0) + 0.2, 0.14, d + 0.25, Math.atan2(uz, ux), WHITE);
     }
     // ---------------------------------------------------------------- roof
-    // oriented frame from the data (t) for rect footprints
-    const t = B.t ?? Math.atan2(P[1][1] - P[0][1], P[1][0] - P[0][0]);
+    // frame from the footprint itself (dominant edge direction), so the roof always matches the walls
+    const t = frameAngle(P);
     let ux = Math.cos(t), uz = Math.sin(t);
     let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
     for (const [x, z] of P) { const u = x * ux + z * uz, v = -x * uz + z * ux; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
@@ -282,70 +385,134 @@ export function buildBuildings(city, T, opts = {}) {
     const rc = srgb(...B.rc);
     const roofCol = rm === 'ceramic' ? rc : rm === 'slab' ? srgb(190, 186, 178) : rc.map(v => Math.min(1, v * 1.05));
     const rb = roofs[rm];
+    const shape = footprintShape(P, t);
+    const pitch = rm === 'ceramic' ? 0.33 + h2 * 0.08 : rm === 'fiber' ? 0.16 : 0.1;
+    const ov = rm === 'ceramic' ? 0.55 : 0.35;
+    const tu = rm === 'ceramic' ? 1.1 : 1.0;
     let roofTopY = eave;
-    if (parapet || B.k === 'ortho' || rm === 'slab') {
-      // flat / hidden roof behind the parapet: draw the actual polygon at eave + 0.25
-      const y = eave + 0.25;
+    const flatRoof = parapet || rm === 'slab' || shape.kind === 'other';
+    const flatPoly = (y, col, b0 = rb) => {
       const tris = THREE.ShapeUtils.triangulateShape(P.map(([x, z]) => new THREE.Vector2(x, z)), []);
       for (const [i0, i1, i2] of tris) {
         const p0 = P[i0], p1 = P[i1], p2 = P[i2];
         const A2 = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0]);
         const [q1, q2] = A2 > 0 ? [p2, p1] : [p1, p2];
-        rb.tri([p0[0], y, p0[1]], [q1[0], y, q1[1]], [q2[0], y, q2[1]], [p0[0] / 2, p0[1] / 2], [q1[0] / 2, q1[1] / 2], [q2[0] / 2, q2[1] / 2], roofCol, [0, 1, 0]);
+        b0.tri([p0[0], y, p0[1]], [q1[0], y, q1[1]], [q2[0], y, q2[1]], [p0[0] / 2, p0[1] / 2], [q1[0] / 2, q1[1] / 2], [q2[0] / 2, q2[1] / 2], col, [0, 1, 0]);
       }
-      roofTopY = y;
+    };
+    // one rectangle (centre, axis, half sizes) with a hip / gable / shed roof, eaves overhanging
+    const rectRoof = (rcx, rcz, rux, ruz, ra, rbb, kind, walls) => {
+      const rvx = -ruz, rvz = rux;
+      const Rr = (u, v, y) => [rcx + rux * u + rvx * v, y, rcz + ruz * u + rvz * v];
+      const A_ = ra + ov, B_ = rbb + ov;
+      const ridge = eave + B_ * pitch;
+      const sl = Math.hypot(B_, ridge - eave);
+      if (kind === 'shed') {
+        const y0s = eave + 2 * B_ * pitch, y1s = eave;
+        rb.quad(Rr(-A_, B_, y1s), Rr(A_, B_, y1s), Rr(A_, -B_, y0s), Rr(-A_, -B_, y0s), [0, 0], [2 * A_ / tu, 0], [2 * A_ / tu, 2 * B_ / tu], [0, 2 * B_ / tu], roofCol);
+        if (walls) {
+          const bu = tileUV(TILE.BLANK), b0 = [bu.u0, bu.v0], b1 = [bu.u1, bu.v0], b2 = [bu.u0, bu.v1];
+          fac.tri(Rr(-ra, -rbb, eave), Rr(-ra, rbb, eave), Rr(-ra, -rbb, eave + 2 * rbb * pitch), b0, b1, b2, paint);
+          fac.tri(Rr(ra, rbb, eave), Rr(ra, -rbb, eave), Rr(ra, -rbb, eave + 2 * rbb * pitch), b0, b1, b2, paint);
+        }
+        return eave + 2 * B_ * pitch;
+      }
+      if (kind === 'gable') {
+        rb.quad(Rr(-A_, -B_, eave), Rr(A_, -B_, eave), Rr(A_, 0, ridge), Rr(-A_, 0, ridge), [0, 0], [2 * A_ / tu, 0], [2 * A_ / tu, sl / tu], [0, sl / tu], roofCol);
+        rb.quad(Rr(A_, B_, eave), Rr(-A_, B_, eave), Rr(-A_, 0, ridge), Rr(A_, 0, ridge), [0, 0], [2 * A_ / tu, 0], [2 * A_ / tu, sl / tu], [0, sl / tu], roofCol);
+        if (walls) {
+          const gy = eave + rbb * pitch;
+          const bu = tileUV(TILE.BLANK), b0 = [bu.u0, bu.v0], b1 = [bu.u1, bu.v0], b2 = [(bu.u0 + bu.u1) / 2, bu.v1];
+          fac.tri(Rr(-ra, -rbb, eave), Rr(-ra, rbb, eave), Rr(-ra, 0, gy), b0, b1, b2, paint);
+          fac.tri(Rr(ra, rbb, eave), Rr(ra, -rbb, eave), Rr(ra, 0, gy), b0, b1, b2, paint);
+        }
+        if (rm === 'ceramic' && Q !== 'low') boxT(rcx, ridge - 0.06, rcz, 2 * A_, 0.14, 0.32, Math.atan2(ruz, rux), roofCol.map(v => v * 0.8), trim);
+        return ridge;
+      }
+      const r = Math.max(0, A_ - B_);
+      rb.quad(Rr(-A_, -B_, eave), Rr(A_, -B_, eave), Rr(r, 0, ridge), Rr(-r, 0, ridge), [0, 0], [2 * A_ / tu, 0], [(A_ + r) / tu, sl / tu], [(A_ - r) / tu, sl / tu], roofCol);
+      rb.quad(Rr(A_, B_, eave), Rr(-A_, B_, eave), Rr(-r, 0, ridge), Rr(r, 0, ridge), [0, 0], [2 * A_ / tu, 0], [(A_ + r) / tu, sl / tu], [(A_ - r) / tu, sl / tu], roofCol);
+      rb.tri(Rr(-A_, B_, eave), Rr(-A_, -B_, eave), Rr(-r, 0, ridge), [0, 0], [2 * B_ / tu, 0], [B_ / tu, sl / tu], roofCol);
+      rb.tri(Rr(A_, -B_, eave), Rr(A_, B_, eave), Rr(r, 0, ridge), [0, 0], [2 * B_ / tu, 0], [B_ / tu, sl / tu], roofCol);
+      if (rm === 'ceramic' && r > 0.2 && Q !== 'low') boxT(rcx, ridge - 0.06, rcz, 2 * r, 0.14, 0.3, Math.atan2(ruz, rux), roofCol.map(v => v * 0.8), trim);
+      return ridge;
+    };
+    const soffit = (outer, inner) => {
+      if (Q === 'low') return;
+      const soff = rm === 'ceramic' ? srgb(120, 80, 55) : srgb(200, 200, 196);
+      for (let k = 0; k < outer.length; k++) {
+        const k1 = (k + 1) % outer.length;
+        trim.quad(outer[k], inner[k], inner[k1], outer[k1], null, null, null, null, soff, [0, -1, 0]);
+        if (rm === 'ceramic' && h4 < 0.5) { const p = outer[k], q = outer[k1]; trim.quad([p[0], eave - 0.2, p[2]], [q[0], eave - 0.2, q[2]], [q[0], eave + 0.02, q[2]], [p[0], eave + 0.02, p[2]], null, null, null, null, WHITE); }
+      }
+    };
+    if (flatRoof) {
+      // flat / hidden roof behind the parapet: the actual polygon at eave + 0.25
+      const y = eave + 0.25;
+      if (style === 'galpao' && shape.kind === 'rect') {
+        // galpão: low two-slope metal roof showing above the platibanda
+        const gr = shape.rects[0];
+        const ga = gr.a, gb = gr.b, gux = gr.a >= gr.b ? ux : vx, guz = gr.a >= gr.b ? uz : vz;
+        const A2 = Math.max(ga, gb), B2 = Math.min(ga, gb);
+        const gvx = -guz, gvz = gux;
+        const G = (u, v, yy) => [gr.cx + gux * u + gvx * v, yy, gr.cz + guz * u + gvz * v];
+        const rid = y + B2 * 0.09;
+        const sl = Math.hypot(B2, rid - y);
+        rb.quad(G(-A2, -B2, y), G(A2, -B2, y), G(A2, 0, rid), G(-A2, 0, rid), [0, 0], [2 * A2 / tu, 0], [2 * A2 / tu, sl / tu], [0, sl / tu], roofCol);
+        rb.quad(G(A2, B2, y), G(-A2, B2, y), G(-A2, 0, rid), G(A2, 0, rid), [0, 0], [2 * A2 / tu, 0], [2 * A2 / tu, sl / tu], [0, sl / tu], roofCol);
+        // gable infill above the parapet at the two short ends
+        const bu = tileUV(TILE.BLANK), q0 = [bu.u0, bu.v0], q1 = [bu.u1, bu.v0], q2 = [(bu.u0 + bu.u1) / 2, bu.v1];
+        fac.tri(G(-A2, -B2, y), G(-A2, B2, y), G(-A2, 0, rid), q0, q1, q2, paint);
+        fac.tri(G(A2, B2, y), G(A2, -B2, y), G(A2, 0, rid), q0, q1, q2, paint);
+        roofTopY = rid;
+      } else {
+        flatPoly(y, roofCol);
+        roofTopY = y;
+      }
       if (!parapet) for (let i = 0; i < n; i++) { // low laje edge
         const [x0, z0] = P[i], [x1, z1] = P[(i + 1) % n];
         wallQ(trim, x0, z0, x1, z1, eave, y + 0.15, eave, y + 0.15, null, paint.map(v => v * 0.95));
       }
-    } else {
-      const ov = rm === 'ceramic' ? 0.55 : 0.35;
-      const A_ = a + ov, B_ = b + ov;
-      const pitch = rm === 'ceramic' ? 0.33 + h2 * 0.08 : rm === 'fiber' ? 0.16 : 0.1;
-      const ridge = eave + B_ * pitch;
-      roofTopY = ridge;
-      const gable = B.r === 'gable' || (rm === 'ceramic' && h0 < 0.3) || rm !== 'ceramic' && B.r !== 'shed';
-      const tu = rm === 'ceramic' ? 1.1 : 1.0;
-      if (B.r === 'shed') {
-        // one slope, high at the front
-        const y0s = eave + 2 * B_ * pitch, y1s = eave;
-        rb.quad(R(-A_, B_, y1s), R(A_, B_, y1s), R(A_, -B_, y0s), R(-A_, -B_, y0s), [0, 0], [2 * A_ / tu, 0], [2 * A_ / tu, 2 * B_ / tu], [0, 2 * B_ / tu], roofCol);
-        const bu = tileUV(TILE.BLANK), b0 = [bu.u0, bu.v0], b1 = [bu.u1, bu.v0], b2 = [bu.u0, bu.v1];
-        fac.tri(R(-a, -b, eave), R(-a, b, eave), R(-a, -b, eave + 2 * b * pitch), b0, b1, b2, paint);
-        fac.tri(R(a, b, eave), R(a, -b, eave), R(a, -b, eave + 2 * b * pitch), b0, b1, b2, paint);
-      } else if (gable) {
-        const sl = Math.hypot(B_, ridge - eave);
-        rb.quad(R(-A_, -B_, eave), R(A_, -B_, eave), R(A_, 0, ridge), R(-A_, 0, ridge), [0, 0], [2 * A_ / tu, 0], [2 * A_ / tu, sl / tu], [0, sl / tu], roofCol);
-        rb.quad(R(A_, B_, eave), R(-A_, B_, eave), R(-A_, 0, ridge), R(A_, 0, ridge), [0, 0], [2 * A_ / tu, 0], [2 * A_ / tu, sl / tu], [0, sl / tu], roofCol);
-        // gable walls (oitão)
-        const gy = eave + b * pitch;
-        const bu = tileUV(TILE.BLANK), b0 = [bu.u0, bu.v0], b1 = [bu.u1, bu.v0], b2 = [(bu.u0 + bu.u1) / 2, bu.v1];
-        fac.tri(R(-a, -b, eave), R(-a, b, eave), R(-a, 0, gy), b0, b1, b2, paint);
-        fac.tri(R(a, b, eave), R(a, -b, eave), R(a, 0, gy), b0, b1, b2, paint);
-        // ridge cap
-        if (rm === 'ceramic' && Q !== 'low') { const yaw = Math.atan2(uz, ux); boxT(cx, ridge - 0.06, cz, 2 * A_, 0.14, 0.32, yaw, roofCol.map(v => v * 0.8), trim); }
-      } else {
-        const r = Math.max(0, A_ - B_);
-        const sl = Math.hypot(B_, ridge - eave);
-        rb.quad(R(-A_, -B_, eave), R(A_, -B_, eave), R(r, 0, ridge), R(-r, 0, ridge), [0, 0], [2 * A_ / tu, 0], [(A_ + r) / tu, sl / tu], [(A_ - r) / tu, sl / tu], roofCol);
-        rb.quad(R(A_, B_, eave), R(-A_, B_, eave), R(-r, 0, ridge), R(r, 0, ridge), [0, 0], [2 * A_ / tu, 0], [(A_ + r) / tu, sl / tu], [(A_ - r) / tu, sl / tu], roofCol);
-        rb.tri(R(-A_, B_, eave), R(-A_, -B_, eave), R(-r, 0, ridge), [0, 0], [2 * B_ / tu, 0], [B_ / tu, sl / tu], roofCol);
-        rb.tri(R(A_, -B_, eave), R(A_, B_, eave), R(r, 0, ridge), [0, 0], [2 * B_ / tu, 0], [B_ / tu, sl / tu], roofCol);
-        if (rm === 'ceramic' && r > 0.2 && Q !== 'low') { const yaw = Math.atan2(uz, ux); boxT(cx, ridge - 0.06, cz, 2 * r, 0.14, 0.3, yaw, roofCol.map(v => v * 0.8), trim); }
+    } else if (shape.kind === 'rect') {
+      const kind = B.r === 'shed' ? 'shed' : (B.r === 'gable' || (rm === 'ceramic' && h0 < 0.3) || rm !== 'ceramic') ? 'gable' : 'hip';
+      roofTopY = rectRoof(cx, cz, ux, uz, a, b, kind, true);
+      soffit([R(-a - ov, -b - ov, eave - 0.02), R(a + ov, -b - ov, eave - 0.02), R(a + ov, b + ov, eave - 0.02), R(-a - ov, b + ov, eave - 0.02)],
+        [R(-a, -b, eave - 0.02), R(a, -b, eave - 0.02), R(a, b, eave - 0.02), R(-a, b, eave - 0.02)]);
+    } else if (shape.kind === 'rects') {
+      // L / T / U shaped house: one hip roof per wing (the wings meet like real cross-hipped roofs)
+      for (const q of shape.rects) {
+        const along = q.a >= q.b;
+        const qux = along ? Math.cos(t) : -Math.sin(t), quz = along ? Math.sin(t) : Math.cos(t);
+        roofTopY = Math.max(roofTopY, rectRoof(q.cx, q.cz, qux, quz, Math.max(q.a, q.b), Math.min(q.a, q.b), 'hip', false));
       }
-      // soffit (forro do beiral) seen from the street
-      const so = [R(-A_, -B_, eave - 0.02), R(A_, -B_, eave - 0.02), R(A_, B_, eave - 0.02), R(-A_, B_, eave - 0.02)];
-      const si = [R(-a, -b, eave - 0.02), R(a, -b, eave - 0.02), R(a, b, eave - 0.02), R(-a, b, eave - 0.02)];
-      const soff = rm === 'ceramic' ? srgb(120, 80, 55) : srgb(200, 200, 196);
-      if (Q !== 'low') for (let k = 0; k < 4; k++) trim.quad(so[k], si[k], si[(k + 1) % 4], so[(k + 1) % 4], null, null, null, null, soff, [0, -1, 0]);
-      // fascia (white board along the eave)
-      if (rm === 'ceramic' && h4 < 0.5) for (let k = 0; k < 4; k++) { const p = so[k], q = so[(k + 1) % 4]; trim.quad([p[0], eave - 0.2, p[2]], [q[0], eave - 0.2, q[2]], [q[0], eave + 0.02, q[2]], [p[0], eave + 0.02, p[2]], null, null, null, null, WHITE); }
+    } else {
+      // convex non-rectangular footprint (a corner cut by the street): hipped roof up to an inset ring
+      const outer = offsetPoly(P, ov), inner = insetConvex(P, Math.min(a, b));
+      if (!outer || !inner) { flatPoly(eave + 0.25, roofCol); roofTopY = eave + 0.25; }
+      else {
+        const rise = inner.d * pitch;
+        const yi = eave + rise;
+        for (let i = 0; i < n; i++) {
+          const j = (i + 1) % n;
+          const o0 = [outer[i][0], eave, outer[i][1]], o1 = [outer[j][0], eave, outer[j][1]];
+          const i0 = [inner.p[i][0], yi, inner.p[i][1]], i1 = [inner.p[j][0], yi, inner.p[j][1]];
+          const L = Math.hypot(o1[0] - o0[0], o1[2] - o0[2]), sl = Math.hypot(inner.d + ov, rise);
+          rb.quad(o1, o0, i0, i1, [L / tu, 0], [0, 0], [0, sl / tu], [L / tu, sl / tu], roofCol);
+        }
+        for (let i = 1; i < n - 1; i++) {
+          const p0 = inner.p[0], p1 = inner.p[i], p2 = inner.p[i + 1];
+          rb.tri([p0[0], yi, p0[1]], [p2[0], yi, p2[1]], [p1[0], yi, p1[1]], [p0[0] / 2, p0[1] / 2], [p2[0] / 2, p2[1] / 2], [p1[0] / 2, p1[1] / 2], roofCol, [0, 1, 0]);
+        }
+        soffit(outer.map(([x, z]) => [x, eave - 0.02, z]), P.map(([x, z]) => [x, eave - 0.02, z]));
+        roofTopY = yi;
+      }
     }
     // ---------------------------------------------------------------- caixa d'água, dish, solar
-    if (style !== 'galpao' && h3 > 0.4) {
+    // caixa d'água: usually visible on lajes; on tiled roofs most are hidden under the roof
+    if (style !== 'galpao' && (flatRoof ? h3 > 0.45 : h3 > 0.88)) {
       stats.caixa++;
       const tx = cx + ux * a * 0.35 * (h4 - 0.5) * 2, tz = cz + uz * a * 0.35 * (h4 - 0.5) * 2;
-      const onRoof = parapet || rm === 'slab' || B.k === 'ortho';
+      const onRoof = flatRoof;
       const ty = onRoof ? roofTopY : roofTopY - 0.45;
       cyl(tx, ty, tz, 0.62, 0.85, h2 < 0.75 ? srgb(40, 95, 170) : srgb(200, 200, 205), Q === 'low' ? 6 : 10);
     }

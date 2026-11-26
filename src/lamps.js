@@ -124,7 +124,7 @@ export function placeLamps(city, T, opts = {}) {
   const lamps = [];
   const R = rng(4242);
   for (const r of drivable) {
-    if (skip.has(r.id) || r.b) continue;
+    if (skip.has(r.id) || r.b || r.ring) continue;
     if (r.s === 'dirt' && r.hw !== 'tertiary') continue;
     if (r.hw === 'track' || r.hw === 'service' && (r.w || 4) < 5) continue;
     const main = ['trunk', 'trunk_link', 'primary', 'secondary', 'tertiary'].includes(r.hw);

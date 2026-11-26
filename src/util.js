@@ -231,3 +231,36 @@ export class SpatialGrid {
 
 /** Yield to the browser so the loading message can paint. */
 export const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+
+// ------------------------------------------------------------------ contact shadows
+let BLOB_TEX = null;
+function blobTexture() {
+  if (BLOB_TEX) return BLOB_TEX;
+  const S = 64, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d'), img = g.createImageData(S, S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    // soft rounded rectangle: 1 in the middle, fading to 0 at the border
+    const u = Math.abs(x + 0.5 - S / 2) / (S / 2), v = Math.abs(y + 0.5 - S / 2) / (S / 2);
+    const d = Math.pow(Math.pow(u, 4) + Math.pow(v, 4), 0.25);
+    const a = Math.max(0, Math.min(1, (1 - d) / 0.45));
+    const i = (y * S + x) * 4; img.data[i] = img.data[i + 1] = img.data[i + 2] = 255; img.data[i + 3] = Math.round(a * a * 255);
+  }
+  g.putImageData(img, 0, 0);
+  BLOB_TEX = new THREE.CanvasTexture(c);
+  return BLOB_TEX;
+}
+/**
+ * Cheap soft shadow under moving instances (cars, wagons) that do not cast real shadows
+ * (shadow maps are only refreshed when the view changes, so moving casters would leave ghosts).
+ * Returns an InstancedMesh sized from the geometry's footprint; feed it the same matrices.
+ */
+export function contactShadows(geo, n, opacity = 0.55, pad = 1.18) {
+  geo.computeBoundingBox();
+  const b = geo.boundingBox;
+  const pg = new THREE.PlaneGeometry((b.max.x - b.min.x) * pad, (b.max.z - b.min.z) * pad).rotateX(-Math.PI / 2)
+    .translate((b.min.x + b.max.x) / 2, b.min.y + 0.05, (b.min.z + b.max.z) / 2);
+  const m = new THREE.InstancedMesh(pg, new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: blobTexture(), transparent: true, opacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), n);
+  m.count = 0; m.frustumCulled = false; m.renderOrder = 2;
+  m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return m;
+}

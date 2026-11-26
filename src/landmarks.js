@@ -17,7 +17,8 @@ function cv(w, h) { const c = document.createElement('canvas'); c.width = w; c.h
 function tex(c, repeat = false) { const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping; return t; }
 /** Frame helper: local (x right, y up, z forward) -> world. */
 function frame(cx, cz, fx, fz, y0) {
-  const rx = -fz, rz = fx; // right = forward rotated -90°
+  // right-handed with y up (x × y = z), so the faces built by boxL & co. are wound outwards
+  const rx = fz, rz = -fx;
   return (x, y, z) => [cx + rx * x + fx * z, y0 + y, cz + rz * x + fz * z];
 }
 /** textured box in local frame; uv per face scaled by size/texScale (u along face width). */
@@ -71,49 +72,52 @@ function churchTextures() {
   return { towerFront: tex(c1), towerSide: tex(c2), naveSide: tex(c3), naveFront: tex(c4), spire: tex(c5) };
 }
 
+/**
+ * Igreja Matriz N. Sra. do Carmo on its real footprint.
+ * fr = { C: footprint centre, f: unit vector from the back to the front (towards Rua Santos Dumont),
+ *        half: half length of the footprint, roadEdge(x, z): distance to the nearest carriageway edge }
+ */
 export function buildChurch(T, fr) {
   const g = new THREE.Group(); g.name = 'igreja';
   const C = fr.C, F = fr.f;
-  // place the nave so that its front (with the tower) faces the street like the legacy frame
   const y0 = T.at(C[0], C[1]) - 0.2;
   const P = frame(C[0], C[1], F[0], F[1], y0);
   const tx = churchTextures();
-  const mats = {};
   const mat = (t, opts = {}) => new THREE.MeshStandardMaterial({ map: t, roughness: 0.85, ...opts });
   const ochre = srgb(215, 162, 62), white = srgb(246, 242, 230), roofC = srgb(170, 84, 58);
-  // nave body (textured sides), front/back faces + gable
-  const naveL = 24, naveW = 12, naveH = 9.5, zb = -16, zf = zb + naveL;
+  // tower front on the front edge of the footprint, nave behind it
+  const tw = 2.8, tz1 = fr.half || 14, tz0 = tz1 - 5.6, th = 21;
+  const naveL = 20, naveW = 11, naveH = 9.5, zf = tz0 + 1, zb = zf - naveL;
   const side = new GeoBuilder(true, true), front = new GeoBuilder(true, true), plain = new GeoBuilder(true, false), roof = new GeoBuilder(true, true);
-  // sides
   side.quad(P(naveW / 2, 0, zf), P(naveW / 2, 0, zb), P(naveW / 2, naveH, zb), P(naveW / 2, naveH, zf), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
   side.quad(P(-naveW / 2, 0, zb), P(-naveW / 2, 0, zf), P(-naveW / 2, naveH, zf), P(-naveW / 2, naveH, zb), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
-  // front wall (both sides of the tower) and back wall + gables
   front.quad(P(-naveW / 2, 0, zf), P(naveW / 2, 0, zf), P(naveW / 2, naveH, zf), P(-naveW / 2, naveH, zf), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
   plain.quad(P(naveW / 2, 0, zb), P(-naveW / 2, 0, zb), P(-naveW / 2, naveH, zb), P(naveW / 2, naveH, zb), null, null, null, null, white);
-  const rh = 4.2;
+  const rh = 4.0;
   plain.tri(P(-naveW / 2, naveH, zf), P(naveW / 2, naveH, zf), P(0, naveH + rh, zf), null, null, null, white);
   plain.tri(P(naveW / 2, naveH, zb), P(-naveW / 2, naveH, zb), P(0, naveH + rh, zb), null, null, null, white);
-  // ochre cornice along the eaves
+  // plinth (the ground slopes: the walls go down into it) + ochre cornice
+  boxL(plain, P, -naveW / 2 - 0.1, naveW / 2 + 0.1, -1.5, 0.6, zb - 0.1, zf, srgb(150, 146, 140));
   boxL(plain, P, naveW / 2 - 0.05, naveW / 2 + 0.25, naveH - 0.35, naveH, zb, zf, ochre);
   boxL(plain, P, -naveW / 2 - 0.25, -naveW / 2 + 0.05, naveH - 0.35, naveH, zb, zf, ochre);
-  // roof (clay tiles)
   const ov = 0.6, sl = Math.hypot(naveW / 2 + ov, rh);
   roof.quad(P(-naveW / 2 - ov, naveH - 0.3, zb - ov), P(-naveW / 2 - ov, naveH - 0.3, zf), P(0, naveH + rh, zf), P(0, naveH + rh, zb - ov), [0, 0], [naveL, 0], [naveL, sl], [0, sl], roofC);
   roof.quad(P(naveW / 2 + ov, naveH - 0.3, zf), P(naveW / 2 + ov, naveH - 0.3, zb - ov), P(0, naveH + rh, zb - ov), P(0, naveH + rh, zf), [0, 0], [naveL, 0], [naveL, sl], [0, sl], roofC);
-  // sacristy behind (lower)
-  boxL(plain, P, -4, 4, 0, 5, zb - 6, zb, white);
+  // sacristy / apse behind (lower)
+  boxL(plain, P, -4, 4, -1.5, 5, zb - 6, zb, white);
   roof.quad(P(-4.4, 5, zb - 6.4), P(-4.4, 5, zb), P(0, 6.8, zb), P(0, 6.8, zb - 6.4), [0, 0], [6, 0], [6, 4], [0, 4], roofC);
   roof.quad(P(4.4, 5, zb), P(4.4, 5, zb - 6.4), P(0, 6.8, zb - 6.4), P(0, 6.8, zb), [0, 0], [6, 0], [6, 4], [0, 4], roofC);
+  plain.tri(P(4, 5, zb - 6), P(-4, 5, zb - 6), P(0, 6.8, zb - 6), null, null, null, white);
   // tower (front-centre, protruding), textured faces
-  const tw = 2.8, tz0 = zf - 1, tz1 = zf + 4.6, th = 21;
   const tf = new GeoBuilder(true, true), ts = new GeoBuilder(true, true);
   tf.quad(P(-tw, 0, tz1), P(tw, 0, tz1), P(tw, th, tz1), P(-tw, th, tz1), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
   ts.quad(P(tw, 0, tz1), P(tw, 0, tz0), P(tw, th, tz0), P(tw, th, tz1), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
   ts.quad(P(-tw, 0, tz0), P(-tw, 0, tz1), P(-tw, th, tz1), P(-tw, th, tz0), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
   ts.quad(P(tw, naveH + rh, tz0), P(-tw, naveH + rh, tz0), P(-tw, th, tz0), P(tw, th, tz0), [0, 0.6], [1, 0.6], [1, 1], [0, 1], [1, 1, 1]);
+  boxL(plain, P, -tw - 0.1, tw + 0.1, -1.5, 0.3, tz0, tz1 + 0.1, srgb(150, 146, 140));
   // cornice cap + 4 pinnacles + spire + cross
   boxL(plain, P, -tw - 0.25, tw + 0.25, th, th + 0.5, tz0 - 0.25, tz1 + 0.25, ochre);
-  const spireG = new GeoBuilder(true, true), sh = 12, sb = tw * 0.92, top = P(0, th + 0.5 + sh, (tz0 + tz1) / 2), zc = (tz0 + tz1) / 2;
+  const spireG = new GeoBuilder(true, true), sh = 12, sb = tw * 0.92, zc = (tz0 + tz1) / 2, top = P(0, th + 0.5 + sh, zc);
   const corners = [[-sb, zc - sb], [sb, zc - sb], [sb, zc + sb], [-sb, zc + sb]];
   for (let k = 0; k < 4; k++) {
     const a = corners[k], b = corners[(k + 1) % 4];
@@ -126,25 +130,76 @@ export function buildChurch(T, fr) {
   }
   boxL(plain, P, -0.07, 0.07, th + sh + 0.3, th + sh + 2.2, zc - 0.07, zc + 0.07, white);
   boxL(plain, P, -0.55, 0.55, th + sh + 1.45, th + sh + 1.6, zc - 0.07, zc + 0.07, white);
-  // front steps + columns flanking the portal
-  boxL(plain, P, -2.6, 2.6, -0.2, 0.25, tz1, tz1 + 1.2, srgb(200, 196, 188));
-  boxL(plain, P, -2.6, 2.6, -0.2, 0.12, tz1 + 1.2, tz1 + 2.2, srgb(200, 196, 188));
-  // adro: low granilite wall + white iron fence + gate, around a forecourt in front
-  const adro = new GeoBuilder(true, true);
-  const az0 = zb - 8, az1 = tz1 + 9, ax = naveW / 2 + 6;
-  const fenceL = [[-ax, az1, -1.6, az1], [1.6, az1, ax, az1], [ax, az1, ax, az0], [-ax, az0, -ax, az1]];
-  for (const [x0, z0, x1, z1] of fenceL) {
-    const L = Math.hypot(x1 - x0, z1 - z0);
-    adro.quad(P(x0, -0.3, z0), P(x1, -0.3, z1), P(x1, 0.9, z1), P(x0, 0.9, z0), [0, 0], [L / 2, 0], [L / 2, 0.5], [0, 0.5], srgb(150, 152, 150));
-    adro.quad(P(x1, -0.3, z1), P(x0, -0.3, z0), P(x0, 0.9, z0), P(x1, 0.9, z1), [0, 0], [L / 2, 0], [L / 2, 0.5], [0, 0.5], srgb(150, 152, 150));
+  // front steps
+  boxL(plain, P, -2.6, 2.6, -1.0, 0.25, tz1, tz1 + 1.2, srgb(200, 196, 188));
+  boxL(plain, P, -2.6, 2.6, -1.0, 0.12, tz1 + 1.2, tz1 + 2.2, srgb(200, 196, 188));
+
+  // ---------------------------------------------------------------- adro (church yard)
+  // front fence just behind the sidewalk of Rua Santos Dumont (found by marching towards the street)
+  const ax = naveW / 2 + 5.5;
+  const W = (x, z) => P(x, 0, z);
+  const frontZ = x => { let z = tz1 + 3; for (; z < tz1 + 70; z += 0.25) { const p = W(x, z); if (fr.roadEdge && fr.roadEdge(p[0], p[2]) < 2.4) break; } return z - 0.3; };
+  const zL = frontZ(-ax), zR = frontZ(ax), zBack = zb - 8;
+  const yard = [[-ax, zBack], [ax, zBack], [ax, zR], [-ax, zL]];
+  const yardW = yard.map(([x, z]) => { const p = W(x, z); return [p[0], p[2]]; });
+  // floor: granite paving in front, lawn along the nave; follows the ground
+  const floor = new GeoBuilder(true, true);
+  const NX = 14, NZ = 24;
+  const fz = x => zL + (zR - zL) * (x + ax) / (2 * ax);
+  for (let i = 0; i < NX; i++) for (let j = 0; j < NZ; j++) {
+    const xa = -ax + 2 * ax * i / NX, xb = -ax + 2 * ax * (i + 1) / NX;
+    const q = (x, t) => { const z = zBack + (fz(x) - zBack) * t; const p = W(x, z); return [p[0], T.at(p[0], p[2]) + 0.07, p[2]]; };
+    const ta = j / NZ, tb = (j + 1) / NZ;
+    const mz = zBack + (fz((xa + xb) / 2) - zBack) * (ta + tb) / 2;
+    const paved = mz > tz0 - 1 || Math.abs((xa + xb) / 2) < 2.2;
+    const col = paved ? srgb(196, 190, 180) : srgb(84, 128, 60);
+    const a = q(xa, ta), b = q(xb, ta), c = q(xb, tb), d = q(xa, tb);
+    const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+    if (ny > 0) floor.quad(a, b, c, d, [a[0] / 2, a[2] / 2], [b[0] / 2, b[2] / 2], [c[0] / 2, c[2] / 2], [d[0] / 2, d[2] / 2], col, [0, 1, 0]);
+    else floor.quad(d, c, b, a, [d[0] / 2, d[2] / 2], [c[0] / 2, c[2] / 2], [b[0] / 2, b[2] / 2], [a[0] / 2, a[2] / 2], col, [0, 1, 0]);
   }
-  const grid = new GeoBuilder(true, true);
-  for (const [x0, z0, x1, z1] of fenceL) {
-    const L = Math.hypot(x1 - x0, z1 - z0);
-    grid.quad(P(x0, 0.9, z0), P(x1, 0.9, z1), P(x1, 2.4, z1), P(x0, 2.4, z0), [0, 0], [L / 0.5, 0], [L / 0.5, 3], [0, 3], [1, 1, 1]);
+  // round garden in the middle of the forecourt (as in the photos), with a curb
+  const gz = (tz1 + 2.2 + Math.min(zL, zR)) / 2, gr = Math.min(3.2, (Math.min(zL, zR) - tz1 - 2.2) / 2 - 1.8);
+  const garden = new GeoBuilder(true, true);
+  if (gr > 1.2) {
+    const gc = W(0, gz), N = 36;
+    for (let k = 0; k < N; k++) {
+      const a0 = k / N * Math.PI * 2, a1 = (k + 1) / N * Math.PI * 2;
+      const pt = (r, a) => { const p = W(Math.cos(a) * r, gz + Math.sin(a) * r); return [p[0], T.at(p[0], p[2]), p[2]]; };
+      const o0 = pt(gr, a0), o1 = pt(gr, a1), i0 = pt(gr - 0.2, a0), i1 = pt(gr - 0.2, a1);
+      const up = (p, h) => [p[0], p[1] + h, p[2]];
+      garden.quad(up(o0, 0.05), up(o1, 0.05), up(o1, 0.35), up(o0, 0.35), [0, 0], [1, 0], [1, 1], [0, 1], srgb(215, 212, 204));
+      garden.quad(up(o1, 0.05), up(o0, 0.05), up(o0, 0.35), up(o1, 0.35), [0, 0], [1, 0], [1, 1], [0, 1], srgb(215, 212, 204));
+      const tcol = srgb(70, 120, 50), c0 = [gc[0], T.at(gc[0], gc[2]) + 0.3, gc[2]];
+      const t0 = up(i0, 0.3), t1 = up(i1, 0.3);
+      const ny = (t0[2] - c0[2]) * (t1[0] - c0[0]) - (t0[0] - c0[0]) * (t1[2] - c0[2]);
+      if (ny > 0) garden.tri(c0, t0, t1, [0, 0], [1, 0], [0, 1], tcol, [0, 1, 0]); else garden.tri(c0, t1, t0, [0, 0], [0, 1], [1, 0], tcol, [0, 1, 0]);
+    }
+    for (let k = 0; k < 18; k++) { // red / white flowers (azaleias)
+      const a = k / 18 * Math.PI * 2, p = W(Math.cos(a) * (gr - 0.8), gz + Math.sin(a) * (gr - 0.8)), y = T.at(p[0], p[2]) + 0.3;
+      const col = k % 3 ? srgb(200, 40, 60) : srgb(245, 240, 235), s = 0.35;
+      garden.quad([p[0] - s, y + 0.35, p[2] - s], [p[0] - s, y + 0.35, p[2] + s], [p[0] + s, y + 0.35, p[2] + s], [p[0] + s, y + 0.35, p[2] - s], [0, 0], [1, 0], [1, 1], [0, 1], col, [0, 1, 0]);
+    }
   }
-  // forecourt floor (granite-like)
-  plain.quad(P(-ax, 0.1, az0 + 0.1), P(-ax, 0.1, az1), P(ax, 0.1, az1), P(ax, 0.1, az0 + 0.1), null, null, null, null, srgb(176, 172, 164));
+  // low granite wall + white bar railing (gradil) + gate posts; gap for the gate in the front
+  const wallG = new GeoBuilder(true, true), rail = new GeoBuilder(true, true);
+  const fenceRun = (x0, z0, x1, z1) => {
+    const L = Math.hypot(x1 - x0, z1 - z0), n = Math.max(1, Math.ceil(L / 2));
+    for (let k = 0; k < n; k++) {
+      const a = W(x0 + (x1 - x0) * k / n, z0 + (z1 - z0) * k / n), b = W(x0 + (x1 - x0) * (k + 1) / n, z0 + (z1 - z0) * (k + 1) / n);
+      const ya = T.at(a[0], a[2]), yb = T.at(b[0], b[2]), l = L / n;
+      const ex = (b[0] - a[0]) / l * 0.12, ez = (b[2] - a[2]) / l * 0.12, nx = -ez, nz = ex; // half thickness
+      // wall body (two faces + top)
+      wallG.quad([a[0] + nx, ya - 0.4, a[2] + nz], [b[0] + nx, yb - 0.4, b[2] + nz], [b[0] + nx, yb + 0.7, b[2] + nz], [a[0] + nx, ya + 0.7, a[2] + nz], [0, 0], [l / 2, 0], [l / 2, 0.55], [0, 0.55], srgb(150, 152, 150));
+      wallG.quad([b[0] - nx, yb - 0.4, b[2] - nz], [a[0] - nx, ya - 0.4, a[2] - nz], [a[0] - nx, ya + 0.7, a[2] - nz], [b[0] - nx, yb + 0.7, b[2] - nz], [0, 0], [l / 2, 0], [l / 2, 0.55], [0, 0.55], srgb(150, 152, 150));
+      wallG.quad([a[0] - nx, ya + 0.7, a[2] - nz], [b[0] - nx, yb + 0.7, b[2] - nz], [b[0] + nx, yb + 0.7, b[2] + nz], [a[0] + nx, ya + 0.7, a[2] + nz], [0, 0], [l / 2, 0], [l / 2, 0.1], [0, 0.1], srgb(170, 172, 170), [0, 1, 0]);
+      rail.quad([a[0], ya + 0.7, a[2]], [b[0], yb + 0.7, b[2]], [b[0], yb + 2.1, b[2]], [a[0], ya + 2.1, a[2]], [0, 0], [l / 0.5, 0], [l / 0.5, 1], [0, 1], [1, 1, 1]);
+    }
+  };
+  const gate = 2.6, xg0 = -gate, xg1 = gate;
+  fenceRun(-ax, zL, xg0, fz(xg0)); fenceRun(xg1, fz(xg1), ax, zR);
+  fenceRun(ax, zR, ax, zBack); fenceRun(-ax, zBack, -ax, zL); fenceRun(ax, zBack, -ax, zBack);
+  for (const x of [-ax, xg0, xg1, ax]) { const z = fz(x), p = W(x, z), gy = T.at(p[0], p[2]) - y0; boxL(plain, P, x - 0.25, x + 0.25, gy - 0.3, gy + 2.3, z - 0.25, z + 0.25, white); }
   // ---- materials
   const add = (gb, m, cast = true) => { if (!gb.count) return; const me = new THREE.Mesh(gb.geometry(), m); me.castShadow = cast; me.receiveShadow = true; g.add(me); };
   add(side, mat(tx.naveSide));
@@ -155,14 +210,262 @@ export function buildChurch(T, fr) {
   add(plain, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }));
   const roofTex = (() => { const [c, x] = cv(128, 128); x.fillStyle = '#cfcfcf'; x.fillRect(0, 0, 128, 128); for (let r = 0; r < 8; r++) for (let k = 0; k < 8; k++) { const v = 170 + Math.random() * 70; x.fillStyle = `rgb(${v},${v},${v})`; x.fillRect(k * 16 + 1, r * 16, 14, 14); x.fillStyle = 'rgba(0,0,0,0.3)'; x.fillRect(k * 16, r * 16 + 13, 16, 3); } const t = tex(c, true); return t; })();
   add(roof, new THREE.MeshStandardMaterial({ vertexColors: true, map: roofTex, roughness: 0.8, side: THREE.DoubleSide }));
-  const granite = (() => { const [c, x] = cv(64, 64); for (let i = 0; i < 64 * 64; i++) { const v = 120 + Math.random() * 90; x.fillStyle = `rgb(${v},${v},${v})`; x.fillRect(i % 64, Math.floor(i / 64), 1, 1); } return tex(c, true); })();
-  add(adro, new THREE.MeshStandardMaterial({ vertexColors: true, map: granite, roughness: 0.9, side: THREE.DoubleSide }));
-  const mesh = (() => { const [c, x] = cv(64, 64); x.clearRect(0, 0, 64, 64); x.strokeStyle = '#f4f4f4'; x.lineWidth = 3; x.beginPath(); x.moveTo(0, 0); x.lineTo(64, 64); x.moveTo(64, 0); x.lineTo(0, 64); x.stroke(); x.strokeRect(0, 0, 64, 64); return tex(c, true); })();
-  add(grid, new THREE.MeshStandardMaterial({ map: mesh, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.5 }), false);
-  // palm trees on both sides of the forecourt (imperial palms, as in the photos)
+  const granite = (() => { const [c, x] = cv(64, 64); for (let i = 0; i < 64 * 64; i++) { const v = 150 + Math.random() * 80; x.fillStyle = `rgb(${v},${v},${v})`; x.fillRect(i % 64, Math.floor(i / 64), 1, 1); } x.fillStyle = 'rgba(0,0,0,0.25)'; for (let k = 0; k < 64; k += 16) { x.fillRect(k, 0, 1, 64); x.fillRect(0, k, 64, 1); } return tex(c, true); })();
+  add(floor, new THREE.MeshStandardMaterial({ vertexColors: true, map: granite, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }), false);
+  add(garden, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), false);
+  add(wallG, new THREE.MeshStandardMaterial({ vertexColors: true, map: granite, roughness: 0.9 }));
+  const bars = (() => { const [c, x] = cv(64, 64); x.clearRect(0, 0, 64, 64); x.fillStyle = '#f4f4f2'; for (let k = 0; k < 64; k += 16) x.fillRect(k + 6, 0, 4, 64); x.fillRect(0, 0, 64, 5); x.fillRect(0, 59, 64, 5); return tex(c, true); })();
+  add(rail, new THREE.MeshStandardMaterial({ map: bars, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.5 }), false);
+  // imperial palms: both sides of the façade and at the front corners of the yard (photos)
   const palms = [];
-  for (const [x, z] of [[-ax + 2, az1 - 2.5], [ax - 2, az1 - 2.5], [-ax + 2, zb + 4], [ax - 2, zb + 4]]) { const p = P(x, 0, z); palms.push([p[0], p[2]]); }
-  return { group: g, palms };
+  for (const [x, z] of [[-tw - 3.2, tz1 + 1], [tw + 3.2, tz1 + 1], [-ax + 1.6, zL - 2], [ax - 1.6, zR - 2]]) { const p = P(x, 0, z); palms.push([p[0], p[2]]); }
+  return { group: g, palms, yard: yardW, center: W(0, (zb + tz1) / 2), front: [F[0], F[1]] };
+}
+
+
+// ================================================================== PRACINHA DA MATRIZ
+/**
+ * Triangular pracinha (canteiro) in front of the Matriz, between Rua Santos Dumont and Rua Olegário
+ * Maciel: pedra portuguesa paving with a kerb, a round flower bed and the statue of the saint on a
+ * stepped pedestal, facing the church; benches and globe lamps.
+ * corners: three road-centreline corners [[x,z]x3]; hw: half carriageway width of each side (i -> i+1)
+ */
+export function buildPracinha(T, corners, hw, faceTo) {
+  const g = new THREE.Group(); g.name = 'pracinha';
+  // inner triangle: every side moved inwards by its half width
+  let area2 = 0; for (let i = 0; i < 3; i++) { const a = corners[i], b = corners[(i + 1) % 3]; area2 += a[0] * b[1] - b[0] * a[1]; }
+  const sgn = area2 > 0 ? 1 : -1;
+  const lines = corners.map((a, i) => {
+    const b = corners[(i + 1) % 3], L = Math.hypot(b[0] - a[0], b[1] - a[1]), ex = (b[0] - a[0]) / L, ez = (b[1] - a[1]) / L;
+    const nx = -ez * sgn, nz = ex * sgn; // inward normal
+    return { px: a[0] + nx * hw[i], pz: a[1] + nz * hw[i], ex, ez };
+  });
+  const tri = [0, 1, 2].map(i => {
+    const l0 = lines[(i + 2) % 3], l1 = lines[i];
+    const den = l0.ex * l1.ez - l0.ez * l1.ex, t = ((l1.px - l0.px) * l1.ez - (l1.pz - l0.pz) * l1.ex) / den;
+    return [l0.px + l0.ex * t, l0.pz + l0.ez * t];
+  });
+  // incentre (best spot for the monument)
+  const la = [0, 1, 2].map(i => Math.hypot(tri[(i + 1) % 3][0] - tri[(i + 2) % 3][0], tri[(i + 1) % 3][1] - tri[(i + 2) % 3][1]));
+  const per = la[0] + la[1] + la[2];
+  const ic = [(la[0] * tri[0][0] + la[1] * tri[1][0] + la[2] * tri[2][0]) / per, (la[0] * tri[0][1] + la[1] * tri[1][1] + la[2] * tri[2][1]) / per];
+  const inr = Math.abs((tri[1][0] - tri[0][0]) * (tri[2][1] - tri[0][1]) - (tri[1][1] - tri[0][1]) * (tri[2][0] - tri[0][0])) / per;
+  const yAt = (x, z) => T.at(x, z);
+  const pave = new GeoBuilder(true, true), solid = new GeoBuilder(true, false), statue = new GeoBuilder(true, false);
+  // paving (subdivided so it follows the ground), 0.2 m above the street
+  const N = 12;
+  const bary = (u, v) => [tri[0][0] + (tri[1][0] - tri[0][0]) * u + (tri[2][0] - tri[0][0]) * v, tri[0][1] + (tri[1][1] - tri[0][1]) * u + (tri[2][1] - tri[0][1]) * v];
+  const V = (u, v) => { const [x, z] = bary(u, v); return [x, yAt(x, z) + 0.2, z]; };
+  const upTri = (a, b, c) => { const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]); if (ny > 0) pave.tri(a, b, c, [a[0] / 3, a[2] / 3], [b[0] / 3, b[2] / 3], [c[0] / 3, c[2] / 3], [1, 1, 1], [0, 1, 0]); else pave.tri(a, c, b, [a[0] / 3, a[2] / 3], [c[0] / 3, c[2] / 3], [b[0] / 3, b[2] / 3], [1, 1, 1], [0, 1, 0]); };
+  for (let i = 0; i < N; i++) for (let j = 0; j < N - i; j++) {
+    upTri(V(i / N, j / N), V((i + 1) / N, j / N), V(i / N, (j + 1) / N));
+    if (i + j < N - 1) upTri(V((i + 1) / N, j / N), V((i + 1) / N, (j + 1) / N), V(i / N, (j + 1) / N));
+  }
+  // kerb (meio-fio) around
+  const kerbC = srgb(225, 223, 215);
+  for (let i = 0; i < 3; i++) {
+    const a = tri[i], b = tri[(i + 1) % 3], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.ceil(L / 2);
+    for (let k = 0; k < n; k++) {
+      const p = [a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n], q = [a[0] + (b[0] - a[0]) * (k + 1) / n, a[1] + (b[1] - a[1]) * (k + 1) / n];
+      const yp = yAt(...p), yq = yAt(...q);
+      solid.quad([p[0], yp - 0.1, p[1]], [q[0], yq - 0.1, q[1]], [q[0], yq + 0.22, q[1]], [p[0], yp + 0.22, p[1]], null, null, null, null, kerbC);
+      solid.quad([q[0], yq - 0.1, q[1]], [p[0], yp - 0.1, p[1]], [p[0], yp + 0.22, p[1]], [q[0], yq + 0.22, q[1]], null, null, null, null, kerbC);
+    }
+  }
+  // round flower bed around the monument
+  const bedR = Math.max(1.8, Math.min(3.2, inr - 1.6));
+  const y0 = yAt(ic[0], ic[1]) + 0.2;
+  const NB = 32;
+  for (let k = 0; k < NB; k++) {
+    const a0 = k / NB * Math.PI * 2, a1 = (k + 1) / NB * Math.PI * 2;
+    const p = (r, a, y) => [ic[0] + Math.cos(a) * r, y, ic[1] + Math.sin(a) * r];
+    solid.quad(p(bedR, a1, y0), p(bedR, a0, y0), p(bedR, a0, y0 + 0.4), p(bedR, a1, y0 + 0.4), null, null, null, null, srgb(200, 196, 188));
+    solid.quad(p(bedR, a0, y0 + 0.4), p(bedR - 0.25, a0, y0 + 0.4), p(bedR - 0.25, a1, y0 + 0.4), p(bedR, a1, y0 + 0.4), null, null, null, null, srgb(215, 212, 205), [0, 1, 0]);
+    const c = [ic[0], y0 + 0.36, ic[1]], t0 = p(bedR - 0.25, a0, y0 + 0.36), t1 = p(bedR - 0.25, a1, y0 + 0.36);
+    const ny = (t0[2] - c[2]) * (t1[0] - c[0]) - (t0[0] - c[0]) * (t1[2] - c[2]);
+    if (ny > 0) solid.tri(c, t0, t1, null, null, null, srgb(72, 118, 48), [0, 1, 0]); else solid.tri(c, t1, t0, null, null, null, srgb(72, 118, 48), [0, 1, 0]);
+  }
+  for (let k = 0; k < 20; k++) {
+    const a = k / 20 * Math.PI * 2, r = bedR - 0.7, x = ic[0] + Math.cos(a) * r, z = ic[1] + Math.sin(a) * r, s = 0.3;
+    const col = k % 2 ? srgb(210, 50, 90) : srgb(250, 210, 60);
+    solid.quad([x - s, y0 + 0.7, z - s], [x - s, y0 + 0.7, z + s], [x + s, y0 + 0.7, z + s], [x + s, y0 + 0.7, z - s], null, null, null, null, col, [0, 1, 0]);
+    solid.quad([x - s, y0 + 0.36, z + s], [x + s, y0 + 0.36, z + s], [x + s, y0 + 0.7, z + s], [x - s, y0 + 0.7, z + s], null, null, null, null, col.map(v => v * 0.75));
+    solid.quad([x + s, y0 + 0.36, z - s], [x - s, y0 + 0.36, z - s], [x - s, y0 + 0.7, z - s], [x + s, y0 + 0.7, z - s], null, null, null, null, col.map(v => v * 0.75));
+  }
+  // monument: three granite steps, pedestal with cornice, statue of the saint facing the church
+  const fx = faceTo[0] - ic[0], fz = faceTo[1] - ic[1], fl = Math.hypot(fx, fz) || 1;
+  const P = frame(ic[0], ic[1], fx / fl, fz / fl, y0 + 0.36);
+  const gran = srgb(168, 166, 160), marble = srgb(240, 238, 232);
+  boxL(solid, P, -1.3, 1.3, 0, 0.3, -1.3, 1.3, gran);
+  boxL(solid, P, -1.0, 1.0, 0.3, 0.6, -1.0, 1.0, gran);
+  boxL(solid, P, -0.75, 0.75, 0.6, 0.9, -0.75, 0.75, gran);
+  boxL(solid, P, -0.5, 0.5, 0.9, 2.5, -0.5, 0.5, marble);
+  boxL(solid, P, -0.62, 0.62, 2.5, 2.7, -0.62, 0.62, marble);
+  boxL(solid, P, -0.36, 0.36, 1.35, 1.85, 0.5, 0.53, srgb(150, 120, 60)); // bronze plaque
+  // statue: robe (lathe), mantle, head, hands, halo
+  const lathe = (prof, seg, col, yaw0 = 0) => {
+    for (let k = 0; k < seg; k++) {
+      const a0 = k / seg * Math.PI * 2 + yaw0, a1 = (k + 1) / seg * Math.PI * 2 + yaw0;
+      for (let i = 0; i < prof.length - 1; i++) {
+        const [r0, h0] = prof[i], [r1, h1] = prof[i + 1];
+        const q = (r, h, a) => P(Math.sin(a) * r, h, Math.cos(a) * r);
+        statue.quad(q(r0, h0, a0), q(r0, h0, a1), q(r1, h1, a1), q(r1, h1, a0), null, null, null, null, col);
+      }
+    }
+  };
+  const sb = 2.7;
+  lathe([[0.42, sb], [0.40, sb + 0.5], [0.33, sb + 1.2], [0.27, sb + 1.6], [0.25, sb + 1.75], [0.12, sb + 1.82]], 14, marble);   // robe
+  lathe([[0.30, sb + 1.25], [0.31, sb + 1.55], [0.2, sb + 1.78], [0.1, sb + 1.85]], 14, srgb(230, 228, 222));                    // mantle
+  lathe([[0.0, sb + 1.82], [0.11, sb + 1.86], [0.13, sb + 1.98], [0.1, sb + 2.1], [0.0, sb + 2.15]], 10, srgb(236, 226, 212));  // head
+  boxL(statue, P, -0.36, -0.22, sb + 1.05, sb + 1.5, 0.08, 0.3, marble); boxL(statue, P, 0.22, 0.36, sb + 1.05, sb + 1.5, 0.08, 0.3, marble); // arms open
+  boxL(statue, P, -0.42, -0.3, sb + 0.98, sb + 1.1, 0.22, 0.38, srgb(236, 226, 212)); boxL(statue, P, 0.3, 0.42, sb + 0.98, sb + 1.1, 0.22, 0.38, srgb(236, 226, 212));
+  for (let k = 0; k < 16; k++) { // halo
+    const a0 = k / 16 * Math.PI * 2, a1 = (k + 1) / 16 * Math.PI * 2, r = 0.22, h = sb + 2.06, zz = -0.1;
+    statue.quad(P(Math.cos(a0) * r, h + Math.sin(a0) * r, zz), P(Math.cos(a1) * r, h + Math.sin(a1) * r, zz), P(Math.cos(a1) * (r + 0.05), h + Math.sin(a1) * (r + 0.05), zz), P(Math.cos(a0) * (r + 0.05), h + Math.sin(a0) * (r + 0.05), zz), null, null, null, null, srgb(220, 180, 70));
+  }
+  // benches along the two long sides + globe lamps at the corners
+  const lamps = [];
+  for (let i = 0; i < 3; i++) {
+    const a = tri[i], b = tri[(i + 1) % 3], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (L < 9) continue;
+    const ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L, nx = -uz * sgn, nz = ux * sgn;
+    const m = [(a[0] + b[0]) / 2 + nx * 1.4, (a[1] + b[1]) / 2 + nz * 1.4];
+    const PB = frame(m[0], m[1], -nx, -nz, yAt(m[0], m[1]) + 0.2);
+    boxL(solid, PB, -0.9, 0.9, 0.42, 0.48, -0.25, 0.25, srgb(140, 96, 60));
+    boxL(solid, PB, -0.9, 0.9, 0.5, 0.9, 0.22, 0.28, srgb(140, 96, 60));
+    for (const x of [-0.75, 0.75]) boxL(solid, PB, x - 0.05, x + 0.05, 0, 0.42, -0.2, 0.2, srgb(60, 60, 62));
+  }
+  for (const c of tri) {
+    const x = c[0] + (ic[0] - c[0]) * 0.22, z = c[1] + (ic[1] - c[1]) * 0.22, y = yAt(x, z) + 0.2;
+    boxL(solid, frame(x, z, 1, 0, y), -0.06, 0.06, 0, 3.6, -0.06, 0.06, srgb(40, 42, 44));
+    lamps.push([x, y + 3.8, z]);
+  }
+  const portuguese = (() => { const [c, x] = cv(256, 256); x.fillStyle = '#efece4'; x.fillRect(0, 0, 256, 256); x.fillStyle = '#2b2b2b';
+    for (let r = 0; r < 4; r++) { x.beginPath(); for (let t = 0; t <= 256; t += 4) { const y = r * 64 + 32 + Math.sin(t / 256 * Math.PI * 2) * 14; t ? x.lineTo(t, y) : x.moveTo(t, y); } for (let t = 256; t >= 0; t -= 4) { const y = r * 64 + 44 + Math.sin(t / 256 * Math.PI * 2) * 14; x.lineTo(t, y); } x.fill(); }
+    for (let i = 0; i < 2600; i++) { x.fillStyle = `rgba(0,0,0,${Math.random() * 0.12})`; x.fillRect(Math.random() * 256, Math.random() * 256, 3, 3); } return tex(c, true); })();
+  const add = (gb, m, cast) => { if (!gb.count) return; const me = new THREE.Mesh(gb.geometry(), m); me.castShadow = cast; me.receiveShadow = true; g.add(me); };
+  add(pave, new THREE.MeshStandardMaterial({ map: portuguese, roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }), false);
+  add(solid, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 }), true);
+  add(statue, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, side: THREE.DoubleSide }), true);
+  // globe lamps (emissive at night through the shared lamp system is not needed: small own glow)
+  const globeM = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2d0, emissiveIntensity: 0, roughness: 0.3 });
+  for (const [x, y, z] of lamps) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 8), globeM); s.position.set(x, y, z); g.add(s); }
+  g.userData.setNight = n => { globeM.emissiveIntensity = n * 1.6; };
+  return { group: g, center: ic, tri, statue: [ic[0], y0 + 0.36 + sb + 2.2, ic[1]] };
+}
+
+
+// ================================================================== CEMITÉRIO SÃO JOÃO
+/**
+ * Cemetery: jazigos of varied height and colour in rows along alleys, crosses, a few family chapels,
+ * a perimeter wall and trees along the main alleys. Tombs/crosses are instanced (cheap).
+ * Returns { group, trees: [[x,z,size,seed,species]] }.
+ */
+export function buildCemetery(T, poly, roadEdge = () => 1e9) {
+  const g = new THREE.Group(); g.name = 'cemiterio';
+  const p = poly.slice(); if (p.length > 3 && p[0][0] === p[p.length - 1][0] && p[0][1] === p[p.length - 1][1]) p.pop();
+  let ux = 1, uz = 0, best = 0;
+  for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L > best) { best = L; ux = (b[0] - a[0]) / L; uz = (b[1] - a[1]) / L; } }
+  const vx = -uz, vz = ux;
+  let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+  for (const [x, z] of p) { const u = x * ux + z * uz, v = x * vx + z * vz; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+  const W = (u, v) => [u * ux + v * vx, u * uz + v * vz];
+  const inside = (x, z) => { let c = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) if ((p[i][1] > z) !== (p[j][1] > z) && x < (p[j][0] - p[i][0]) * (z - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]) c = !c; return c; };
+  const edgeDist = (x, z) => { let d = 1e9; for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length]; const dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz || 1; let t = ((x - a[0]) * dx + (z - a[1]) * dz) / L2; t = Math.max(0, Math.min(1, t)); d = Math.min(d, Math.hypot(a[0] + dx * t - x, a[1] + dz * t - z)); } return d; };
+  const R = rng(5150);
+  const uc = (u0 + u1) / 2, vc = (v0 + v1) / 2;
+  const alleyU = v => Math.abs(v - vc) < 2.2, alleyV = u => Math.abs(u - uc) < 2.2 || Math.abs(u - (u0 + uc) / 2) < 1.4 || Math.abs(u - (u1 + uc) / 2) < 1.4;
+  // ---- ground: sandy soil, cement alleys
+  const ground = new GeoBuilder(true, false);
+  const NG = 2.5;
+  for (let u = u0; u < u1; u += NG) for (let v = v0; v < v1; v += NG) {
+    const [mx, mz] = W(u + NG / 2, v + NG / 2);
+    if (!inside(mx, mz) || roadEdge(mx, mz) < 1.8) continue;
+    const alley = alleyU(v + NG / 2) || alleyV(u + NG / 2);
+    const col = alley ? srgb(196, 192, 184) : srgb(176 + R() * 10, 162 + R() * 8, 140);
+    const q = (uu, vv) => { const [x, z] = W(uu, vv); return [x, T.at(x, z) + 0.06, z]; };
+    const a = q(u, v), b = q(u + NG, v), c = q(u + NG, v + NG), d = q(u, v + NG);
+    const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+    if (ny > 0) ground.quad(a, b, c, d, null, null, null, null, col, [0, 1, 0]); else ground.quad(d, c, b, a, null, null, null, null, col, [0, 1, 0]);
+  }
+  const gm = new THREE.Mesh(ground.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }));
+  gm.receiveShadow = true; g.add(gm);
+  // ---- tombs (jazigos), crosses, family chapels
+  const tombs = [], crosses = [], chapels = [], trees = [];
+  const yaw = -Math.atan2(uz, ux);
+  for (let u = u0 + 3; u < u1 - 3; u += 1.6) {
+    if (alleyV(u)) continue;
+    for (let v = v0 + 3; v < v1 - 3; v += 3.3) {
+      if (alleyU(v) || alleyU(v + 2.4)) continue;
+      const [x, z] = W(u, v + 1.15);
+      if (!inside(x, z) || edgeDist(x, z) < 3 || roadEdge(x, z) < 3.2) continue;
+      const r = R();
+      if (r < 0.06) continue; // empty plot
+      if (r > 0.975 && !chapels.some(c => Math.hypot(c[0] - x, c[1] - z) < 12)) { chapels.push([x, z]); continue; }
+      const h = 0.45 + Math.pow(R(), 2) * 1.0, w = 1.0 + R() * 0.25, l = 2.1 + R() * 0.3;
+      const tone = R();
+      const col = tone < 0.55 ? [0.92, 0.92, 0.9] : tone < 0.8 ? [0.78, 0.78, 0.77] : tone < 0.93 ? [0.42, 0.40, 0.40] : [0.75, 0.82, 0.86];
+      tombs.push({ x, z, h, w, l, col });
+      if (R() < 0.35) crosses.push({ x: x + Math.cos(-yaw) * 0 , z, h, along: l });
+    }
+  }
+  // trees along the main alleys
+  for (let u = u0 + 6; u < u1 - 6; u += 14) for (const dv of [-3.2, 3.2]) { const [x, z] = W(u, vc + dv); if (inside(x, z) && edgeDist(x, z) > 3 && roadEdge(x, z) > 3) trees.push([x, z, 3.2 + R() * 1.2, Math.floor(R() * 900), 2]); }
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), S = new THREE.Vector3(), Pv = new THREE.Vector3(), col = new THREE.Color();
+  const box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+  const tm = new THREE.InstancedMesh(box, new THREE.MeshStandardMaterial({ roughness: 0.6 }), tombs.length);
+  tombs.forEach((t, i) => { Pv.set(t.x, T.at(t.x, t.z) - 0.1, t.z); S.set(t.w, t.h + 0.1, t.l); M.compose(Pv, Q, S); tm.setMatrixAt(i, M); tm.setColorAt(i, col.setRGB(...t.col, THREE.SRGBColorSpace)); });
+  tm.castShadow = true; tm.receiveShadow = true; g.add(tm);
+  // headstones (lápides) at one end of most tombs
+  const head = new THREE.InstancedMesh(box, new THREE.MeshStandardMaterial({ color: 0xdedbd4, roughness: 0.5 }), tombs.length);
+  let nh = 0;
+  const off = new THREE.Vector3();
+  tombs.forEach(t => { if (t.h > 1.1) return; off.set(0, 0, -t.l / 2 + 0.12).applyQuaternion(Q); Pv.set(t.x + off.x, T.at(t.x, t.z) + t.h - 0.1, t.z + off.z); S.set(t.w * 0.9, 0.55 + (t.w - 1) * 2, 0.14); M.compose(Pv, Q, S); head.setMatrixAt(nh++, M); });
+  head.count = nh; head.castShadow = true; g.add(head);
+  // crosses
+  const cg = new GeoBuilder(false, false);
+  const cb = (x0, x1, y0, y1, z0, z1) => { const v = [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]]; const f = (a, b, c, d) => cg.quad(v[a], v[b], v[c], v[d], null, null, null, null, [1, 1, 1]); f(4, 7, 6, 5); f(0, 1, 5, 4); f(1, 2, 6, 5); f(2, 3, 7, 6); f(3, 0, 4, 7); };
+  cb(-0.05, 0.05, 0, 1.0, -0.05, 0.05); cb(-0.3, 0.3, 0.62, 0.72, -0.05, 0.05);
+  const crossGeo = cg.geometry();
+  const cm = new THREE.InstancedMesh(crossGeo, new THREE.MeshStandardMaterial({ color: 0xf2f0ea, roughness: 0.5 }), crosses.length);
+  crosses.forEach((c, i) => { off.set(0, 0, -c.along / 2 + 0.15).applyQuaternion(Q); Pv.set(c.x + off.x, T.at(c.x, c.z) + c.h, c.z + off.z); M.compose(Pv, Q, S.set(1, 1, 1)); cm.setMatrixAt(i, M); });
+  cm.castShadow = true; g.add(cm);
+  // family chapels (capelinhas) with a small gable roof + the cemetery chapel at the main crossing
+  const ch = new GeoBuilder(true, false);
+  const chapel = (x, z, w, l, h, colW) => {
+    const y0 = T.at(x, z) - 0.2;
+    const Pf = frame(x, z, uz, -ux, y0);
+    boxL(ch, Pf, -w / 2, w / 2, 0, h, -l / 2, l / 2, colW);
+    const r = h + w * 0.35;
+    ch.quad(Pf(-w / 2 - 0.15, h, -l / 2 - 0.15), Pf(-w / 2 - 0.15, h, l / 2 + 0.15), Pf(0, r, l / 2 + 0.15), Pf(0, r, -l / 2 - 0.15), null, null, null, null, srgb(150, 70, 50));
+    ch.quad(Pf(w / 2 + 0.15, h, l / 2 + 0.15), Pf(w / 2 + 0.15, h, -l / 2 - 0.15), Pf(0, r, -l / 2 - 0.15), Pf(0, r, l / 2 + 0.15), null, null, null, null, srgb(150, 70, 50));
+    ch.tri(Pf(-w / 2, h, l / 2), Pf(w / 2, h, l / 2), Pf(0, r, l / 2), null, null, null, colW);
+    ch.tri(Pf(w / 2, h, -l / 2), Pf(-w / 2, h, -l / 2), Pf(0, r, -l / 2), null, null, null, colW);
+    boxL(ch, Pf, -0.05, 0.05, r, r + 1.0, l / 2 - 0.1, l / 2, srgb(240, 238, 232));
+    boxL(ch, Pf, -0.3, 0.3, r + 0.6, r + 0.7, l / 2 - 0.1, l / 2, srgb(240, 238, 232));
+    boxL(ch, Pf, -0.45, 0.45, 0, 1.9, l / 2, l / 2 + 0.04, srgb(60, 60, 64));
+  };
+  for (const [x, z] of chapels) if (roadEdge(x, z) > 4) chapel(x, z, 2.4, 3.0, 2.8, R() < 0.6 ? srgb(238, 236, 230) : srgb(210, 214, 220));
+  { const [x, z] = W(uc + 7, vc + 7); if (inside(x, z) && roadEdge(x, z) > 7) chapel(x, z, 6, 9, 4.5, srgb(242, 238, 225)); }
+  const chm = new THREE.Mesh(ch.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: THREE.DoubleSide }));
+  chm.castShadow = chm.receiveShadow = true; g.add(chm);
+  // perimeter wall (white, 2.2 m) with the gate in the middle of the longest side
+  const wall = new GeoBuilder(true, false);
+  for (let i = 0; i < p.length; i++) {
+    const a = p[i], b = p[(i + 1) % p.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.ceil(L / 4));
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, t1 = (k + 1) / n;
+      if (L === best && Math.abs((t0 + t1) / 2 - 0.5) * L < 2.5) continue; // gate
+      const x0 = a[0] + (b[0] - a[0]) * t0, z0 = a[1] + (b[1] - a[1]) * t0, x1 = a[0] + (b[0] - a[0]) * t1, z1 = a[1] + (b[1] - a[1]) * t1;
+      if (roadEdge((x0 + x1) / 2, (z0 + z1) / 2) < 1.5 || roadEdge(x0, z0) < 1 || roadEdge(x1, z1) < 1) continue;
+      const y0 = T.at(x0, z0), y1 = T.at(x1, z1);
+      wall.quad([x0, y0 - 0.5, z0], [x1, y1 - 0.5, z1], [x1, y1 + 2.2, z1], [x0, y0 + 2.2, z0], null, null, null, null, srgb(232, 230, 224));
+      wall.quad([x1, y1 - 0.5, z1], [x0, y0 - 0.5, z0], [x0, y0 + 2.2, z0], [x1, y1 + 2.2, z1], null, null, null, null, srgb(222, 220, 214));
+    }
+  }
+  const wm = new THREE.Mesh(wall.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }));
+  wm.castShadow = wm.receiveShadow = true; g.add(wm);
+  return { group: g, trees, inside };
 }
 
 // ================================================================== ESTAÇÃO
@@ -216,7 +519,7 @@ export function buildStation(city, T, railPts) {
   const y0 = T.at(cx, cz) + 0.25;
   const P = frame(cx, cz, fx, fz, y0);
   // local x runs along the track; pick the sign so that x = (ux,uz)
-  const sx = (-fz * ux + fx * uz) > 0 ? 1 : -1; // right vector = (-fz, fx)
+  const sx = (fz * ux - fx * uz) > 0 ? 1 : -1; // right vector = (fz, -fx)
   const X = x => x * sx;
   const tx = stationTextures();
   const blk = new GeoBuilder(true, true), wing = new GeoBuilder(true, true), ped = new GeoBuilder(true, true), plain = new GeoBuilder(true, false), roofG = new GeoBuilder(true, true);

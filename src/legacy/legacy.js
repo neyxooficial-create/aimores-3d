@@ -3947,7 +3947,7 @@ function Zd(i, t, e) {
   let n = new he;
   n.name = "campos";
   for (let s of i.extras.pitches) {
-    if (s.k === "track") continue;
+    if (s.k === "track" || s.k === "cemetery") continue;
     let r = s.p.slice();
     r[0][0] === r[r.length - 1][0] && r.pop();
     let o = ha(r),
