@@ -43,6 +43,14 @@ Site: abra `index.html` por um servidor (GitHub Pages). Não funciona abrindo o 
 - **Ultra mais leve**: a sombra é recalculada só quando a vista ou o sol mudam (carros e trem têm sombra de contato), árvores detalhadas num raio menor.
 - **Cemitério São João** refeito: jazigos variados, cruzes, capelinhas, aleias com árvores e muro.
 
+## Novidades da v6.2
+
+- **Córrego do Triângulo** refeito pelo mapa de referência (S1 "Vale da Rotatória"): nasce no morro a sudoeste do Residencial, desce pela grota a leste da rotatória do Residencial, passa pela borda do morro do clube (Vila Tiago), a leste da rotatória do Triângulo, cruza a ferrovia e segue em galeria sob o Centro até o Córrego da Natividade. O canal ao pé do viaduto virou afluente dele (`source/corrego_triangulo.json`). O braço S2 (Vale Oeste) fica fora deste lado do mapa; o S3 (Morro do Sossego) coincide com o Afluente do Natividade, que já existia. Muros que atravessavam o leito foram retirados.
+- **Viaduto principal** (o da Praça João Pinheiro, primeiro botão de vistas): muros de contenção com concreto claro de forma (juntas, barbacãs, manchas de chuva) no lugar da textura escura; a estação não invade mais a rampa leste.
+- **Carros e motos** com carroceria arredondada, vidros que refletem, rodas com aro, para-choques, retrovisores, faróis e lanternas; moto com piloto (capacete, braços, pernas); ônibus com colunas, porta e faixa; caminhão-baú com nervuras. Carros estacionados usam um modelo mais leve.
+- **Menu e Opções** recolhidos por padrão (botões ☰ Menu e ⚙ Opções), marcadores fechados.
+- **Iluminação**: luz do céu mais forte (lados na sombra menos escuros); ruas com filtro anisotrópico máximo; menos capim/pedras invisíveis no córrego e raio de árvores detalhadas menor (Ultra mais leve).
+
 ## Estrutura
 
 | Pasta / arquivo | O que é |
@@ -66,4 +74,4 @@ npm run build    # src/ -> app.js + index.html
 
 `python3 tools/creek-trace.py` refaz a análise de drenagem que encontrou o córrego (gera `source/creek_raw.json`); o ajuste manual do trecho do Triângulo fica em `source/creek_fix.json`.
 
-Parâmetros de URL úteis: `?q=low|medium|high|ultra` (qualidade), `?h=19.5` (horário), `?tempo=chuva|neblina|nublado|sol`, `?view=corrego|canal|praca|igreja|viadutocentro`, `?fps` (mostra FPS).
+Parâmetros de URL úteis: `?q=low|medium|high|ultra` (qualidade), `?h=19.5` (horário), `?tempo=chuva|neblina|nublado|sol`, `?view=corrego|canal|praca|igreja|viadutocentro` (viadutocentro = viaduto principal; canal = Córrego do Triângulo), `?fps` (mostra FPS).

@@ -3,13 +3,20 @@
 import * as THREE from 'three';
 import { GeoBuilder, rng, hash, srgb, contactShadows } from './util.js';
 
-// vertex attribute "part": 0 = fixed colour, 1 = body paint (instance colour), 2 = headlight, 3 = taillight
-const GLASS = srgb(28, 34, 40), TYRE = srgb(24, 24, 26), RIM = srgb(150, 152, 155), TRIM = srgb(40, 40, 42), CHROME = srgb(190, 190, 195);
+// vertex attribute "part": 0 = fixed colour, 1 = body paint (instance colour), 2 = headlight, 3 = taillight, 4 = glass
+const GLASS = srgb(78, 92, 108), TYRE = srgb(24, 24, 26), RIM = srgb(150, 152, 155), TRIM = srgb(40, 40, 42), CHROME = srgb(190, 190, 195);
 const HEAD = srgb(245, 245, 230), TAIL = srgb(170, 20, 20), PLATE = srgb(230, 230, 225), SEAT = srgb(30, 30, 32);
 
 class VB {
   constructor() { this.g = new GeoBuilder(true, false).enableExtra(); }
   quad(a, b, c, d, col, part = 0) { this.g.quad(a, b, c, d, null, null, null, null, col, null, null, part); }
+  tri(a, b, c, col, part = 0) { this.g.tri(a, b, c, null, null, null, col, null, null, part); }
+  /** triangle with per-vertex normals (smooth shading) */
+  triN(a, b, c, na, nb, nc, col, part = 0) {
+    const g = this.g; g._grow(3);
+    g.vert(a, na, null, col, part); g.vert(b, nb, null, col, part); g.vert(c, nc, null, col, part);
+  }
+  quadN(a, b, c, d, na, nb, nc, nd, col, part = 0) { this.triN(a, b, c, na, nb, nc, col, part); this.triN(a, c, d, na, nc, nd, col, part); }
   /** axis-aligned box: x (forward) y (up) z (left) */
   box(x0, x1, y0, y1, z0, z1, col, part = 0, faces = 'all') {
     const P = (x, y, z) => [x, y, z];
@@ -21,42 +28,123 @@ class VB {
     if (f.includes('r')) this.quad(P(x0, y0, z0), P(x0, y1, z0), P(x1, y1, z0), P(x1, y0, z0), col, part);
     if (f.includes('l')) this.quad(P(x1, y0, z1), P(x1, y1, z1), P(x0, y1, z1), P(x0, y0, z1), col, part);
   }
-  /** cabin / greenhouse: bottom rectangle (x0..x1, ±zb) at y0, top rectangle (x2..x3, ±zt) at y1 */
-  cabin(x0, x1, x2, x3, y0, y1, zb, zt, roofCol, glass = GLASS) {
-    const B = [[x0, y0, -zb], [x1, y0, -zb], [x1, y0, zb], [x0, y0, zb]];
-    const Tp = [[x2, y1, -zt], [x3, y1, -zt], [x3, y1, zt], [x2, y1, zt]];
-    this.quad(Tp[3], Tp[2], Tp[1], Tp[0], roofCol, 1);                     // roof
-    this.quad(B[1], Tp[1], Tp[2], B[2], glass);                             // windscreen
-    this.quad(B[3], Tp[3], Tp[0], B[0], glass);                             // rear window
-    this.quad(B[0], Tp[0], Tp[1], B[1], glass);                             // right side windows
-    this.quad(B[2], Tp[2], Tp[3], B[3], glass);                             // left side windows
-    // B-pillars (paint strips) so the glass reads as separate windows
-    const xm = (x0 + x1) / 2 + 0.05, xt = (x2 + x3) / 2 + 0.05, w = 0.07;
-    for (const s of [-1, 1]) {
-      const zbs = zb * s * 1.01, zts = zt * s * 1.01;
-      if (s < 0) this.quad([xm - w, y0, zbs], [xt - w, y1, zts], [xt + w, y1, zts], [xm + w, y0, zbs], roofCol, 1);
-      else this.quad([xm + w, y0, zbs], [xt + w, y1, zts], [xt - w, y1, zts], [xm - w, y0, zbs], roofCol, 1);
+  /**
+   * Lofted body. stations: [{ x, w (half width), y0 (sill), yb (belt / shoulder), yt (top at the
+   * centre line), tw (half width of the top edge), glass: 'side' | 'top' | 'both' | null }]
+   * Cross-section (left half, mirrored): sill -> lower side -> belt -> top edge -> crown.
+   * Smooth normals around and along the body; glass where the station pair says so.
+   */
+  loft(st, paint = [1, 1, 1], endCaps = true) {
+    const ring = s => {
+      const crown = Math.min(0.05, (s.yt - s.yb) * 0.25 + 0.02);
+      const pts = [
+        [s.y0, s.w * 0.9], [s.y0 + 0.1, s.w], [(s.y0 + s.yb) / 2 + 0.05, s.w * 1.0], [s.yb, s.w * 0.97],
+        [s.yb + (s.yt - s.yb) * 0.55, s.tw + (s.w * 0.97 - s.tw) * 0.4], [s.yt, s.tw], [s.yt + crown * 0.7, s.tw * 0.5], [s.yt + crown, 0],
+      ];
+      return pts;
+    };
+    const R = st.map(ring);
+    const NP = R[0].length;
+    const pos = (i, k, side) => [st[i].x, R[i][k][0], R[i][k][1] * side];
+    // vertex normals: cross of the along-body tangent and the around-ring tangent
+    const nrm = (i, k, side) => {
+      const i0 = Math.max(0, i - 1), i1 = Math.min(st.length - 1, i + 1);
+      const k0 = Math.max(0, k - 1), k1 = Math.min(NP - 1, k + 1);
+      const ta = [st[i1].x - st[i0].x, R[i1][k][0] - R[i0][k][0], (R[i1][k][1] - R[i0][k][1]) * side];
+      const tr = [0, R[i][k1][0] - R[i][k0][0], (R[i][k1][1] - R[i][k0][1]) * side];
+      let n = [ta[1] * tr[2] - ta[2] * tr[1], ta[2] * tr[0] - ta[0] * tr[2], ta[0] * tr[1] - ta[1] * tr[0]];
+      if (side < 0) n = n.map(v => -v);
+      // must point outwards (+z on the left side, up at the crown)
+      const out = [0, R[i][k][0] - (st[i].y0 + st[i].yt) / 2, R[i][k][1] * side];
+      if (n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0) n = n.map(v => -v);
+      const l = Math.hypot(...n) || 1; return n.map(v => v / l);
+    };
+    for (let i = 0; i < st.length - 1; i++) {
+      const gl = st[i].glass && st[i + 1].glass ? st[i].glass : null;
+      for (let k = 0; k < NP - 1; k++) {
+        const isSide = k === 3 || k === 4, isTop = k >= 5;
+        const glass = (gl === 'side' || gl === 'both') && isSide || (gl === 'top' || gl === 'both') && isTop;
+        const col = glass ? GLASS : paint, part = glass ? 4 : 1;
+        for (const side of [1, -1]) {
+          const a = pos(i, k, side), b = pos(i + 1, k, side), c = pos(i + 1, k + 1, side), d = pos(i, k + 1, side);
+          const na = nrm(i, k, side), nb = nrm(i + 1, k, side), nc = nrm(i + 1, k + 1, side), nd = nrm(i, k + 1, side);
+          if (side > 0) this.quadN(a, b, c, d, na, nb, nc, nd, col, part); else this.quadN(a, d, c, b, na, nd, nc, nb, col, part);
+        }
+      }
+      // underside
+      const u0 = pos(i, 0, 1), u1 = pos(i + 1, 0, 1), u2 = pos(i + 1, 0, -1), u3 = pos(i, 0, -1);
+      this.quad(u0, u3, u2, u1, TRIM, 0);
+    }
+    if (endCaps) for (const [i, dir] of [[0, -1], [st.length - 1, 1]]) {
+      const c = [st[i].x, (st[i].y0 + st[i].yt) / 2, 0];
+      const full = [];
+      for (let k = 0; k < NP; k++) full.push(pos(i, k, 1));
+      for (let k = NP - 1; k >= 0; k--) full.push(pos(i, k, -1));
+      for (let k = 0; k < full.length; k++) {
+        const p = full[k], q = full[(k + 1) % full.length];
+        if (dir > 0) this.tri(c, q, p, paint, 1); else this.tri(c, p, q, paint, 1);
+      }
     }
   }
-  wheel(x, z, r, w, sides = 8) {
-    const y = r;
+  /** tyre with sidewall + rim with spokes, wheel arch shadow on the body side */
+  wheel(x, z, r, w, sides = 10, arch = true) {
+    if (this.lod) sides = Math.min(sides, 8);
+    const y = r, so = Math.sign(z) || 1;
+    const zo = z + so * w / 2, zi = z - so * w / 2;
+    const p = (a, rr, zz) => [x + Math.cos(a) * rr, y + Math.sin(a) * rr, zz];
     for (let k = 0; k < sides; k++) {
       const a0 = k / sides * Math.PI * 2, a1 = (k + 1) / sides * Math.PI * 2;
-      const p = (a, zz) => [x + Math.cos(a) * r, y + Math.sin(a) * r, zz];
-      const zo = z + Math.sign(z) * w / 2, zi = z - Math.sign(z) * w / 2;
-      this.quad(p(a0, zi), p(a1, zi), p(a1, zo), p(a0, zo), TYRE);
-      // hub cap on the outer face
-      const c = [x, y, zo], q0 = [x + Math.cos(a0) * r * 0.6, y + Math.sin(a0) * r * 0.6, zo], q1 = [x + Math.cos(a1) * r * 0.6, y + Math.sin(a1) * r * 0.6, zo];
-      if (z > 0) this.g.tri(c, q0, q1, null, null, null, RIM, null, null, 0); else this.g.tri(c, q1, q0, null, null, null, RIM, null, null, 0);
+      // tread (slightly rounded: two bands)
+      const zm = z + so * w * 0.3;
+      if (so > 0) { this.quad(p(a0, r, zi), p(a1, r, zi), p(a1, r, zm), p(a0, r, zm), TYRE); this.quad(p(a0, r, zm), p(a1, r, zm), p(a1, r * 0.95, zo), p(a0, r * 0.95, zo), TYRE); }
+      else { this.quad(p(a0, r, zm), p(a1, r, zm), p(a1, r, zi), p(a0, r, zi), TYRE); this.quad(p(a0, r * 0.95, zo), p(a1, r * 0.95, zo), p(a1, r, zm), p(a0, r, zm), TYRE); }
+      // sidewall ring
+      const s0 = [p(a0, r * 0.95, zo), p(a1, r * 0.95, zo), p(a1, r * 0.66, zo + so * 0.005), p(a0, r * 0.66, zo + so * 0.005)];
+      if (so > 0) this.quad(s0[0], s0[1], s0[2], s0[3], TYRE); else this.quad(s0[3], s0[2], s0[1], s0[0], TYRE);
+      // rim: alternating spoke / dark slot
+      const rc = k % 2 ? RIM : srgb(70, 72, 76);
+      const c = [x, y, zo + so * 0.012], q0 = p(a0, r * 0.66, zo + so * 0.008), q1 = p(a1, r * 0.66, zo + so * 0.008);
+      if (so > 0) this.tri(c, q0, q1, rc); else this.tri(c, q1, q0, rc);
+    }
+    if (arch) {
+      // dark wheel-well half ring on the body side, just outside the paint
+      const ra = r + 0.07, zz = zo - so * 0.004;
+      for (let k = 0; k < 8; k++) {
+        const a0 = k / 8 * Math.PI, a1 = (k + 1) / 8 * Math.PI;
+        const A = p(a0, ra, zz), B = p(a1, ra, zz), C = p(a1, r * 0.98, zz), D = p(a0, r * 0.98, zz);
+        if (so > 0) this.quad(A, B, C, D, srgb(18, 18, 20)); else this.quad(D, C, B, A, srgb(18, 18, 20));
+      }
     }
   }
-  lights(xf, xr, y0, y1, zIn, zOut) {
+  /** headlights (front, part 2), taillights (rear, part 3), plate and grille */
+  lights(xf, xr, y0, y1, zIn, zOut, grille = true) {
     for (const s of [-1, 1]) {
       const a = Math.min(zIn * s, zOut * s), b = Math.max(zIn * s, zOut * s);
-      this.box(xf - 0.02, xf + 0.01, y0, y1, a, b, HEAD, 2, 'f');
-      this.box(xr - 0.01, xr + 0.02, y0, y1, a, b, TAIL, 3, 'k');
+      this.box(xf - 0.03, xf + 0.012, y0, y1, a, b, HEAD, 2, 'ftb' + (s > 0 ? 'l' : 'r'));
+      this.box(xr - 0.012, xr + 0.03, y0, y1, a, b, TAIL, 3, 'ktb' + (s > 0 ? 'l' : 'r'));
     }
-    this.box(xr - 0.012, xr + 0.015, y0 - 0.16, y0 - 0.02, -0.25, 0.25, PLATE, 0, 'k');
+    this.box(xr - 0.014, xr + 0.02, y0 - 0.2, y0 - 0.06, -0.26, 0.26, PLATE, 0, 'k');
+    this.box(xf - 0.02, xf + 0.014, y0 - 0.26, y0 - 0.12, -0.26, 0.26, PLATE, 0, 'f');
+    if (grille) this.box(xf - 0.03, xf + 0.008, y0 - 0.02, y1, -zIn + 0.02, zIn - 0.02, srgb(22, 22, 24), 0, 'f');
+  }
+  mirrors(x, y, w) { for (const s of [-1, 1]) this.box(x - 0.06, x + 0.06, y, y + 0.13, s > 0 ? w : -w - 0.16, s > 0 ? w + 0.16 : -w, [1, 1, 1], 1); }
+  /** thin dark seams on the sides (doors) */
+  seams(xs, y0, y1, w) { if (this.lod) return; for (const x of xs) for (const s of [-1, 1]) this.box(x - 0.012, x + 0.012, y0, y1, s > 0 ? w : -w - 0.004, s > 0 ? w + 0.004 : -w, srgb(20, 20, 22), 0, s > 0 ? 'l' : 'r'); }
+  /** low-poly sphere (helmet / head) */
+  sphere(cx, cy, cz, r, col, part = 0, seg = 8, ring = 5) {
+    const P = (i, j) => { const th = i / ring * Math.PI, ph = j / seg * Math.PI * 2; return [cx + r * Math.sin(th) * Math.cos(ph), cy + r * Math.cos(th), cz + r * Math.sin(th) * Math.sin(ph)]; };
+    const N = (i, j) => { const q = P(i, j); return [(q[0] - cx) / r, (q[1] - cy) / r, (q[2] - cz) / r]; };
+    for (let i = 0; i < ring; i++) for (let j = 0; j < seg; j++) this.quadN(P(i, j), P(i, j + 1), P(i + 1, j + 1), P(i + 1, j), N(i, j), N(i, j + 1), N(i + 1, j + 1), N(i + 1, j), col, part);
+  }
+  /** oriented box between two points (limbs, fork, frame tubes) */
+  beam(a, b, t, col, part = 0) {
+    const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], L = Math.hypot(...d) || 1, u = d.map(v => v / L);
+    let s = Math.abs(u[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+    let v1 = [u[1] * s[2] - u[2] * s[1], u[2] * s[0] - u[0] * s[2], u[0] * s[1] - u[1] * s[0]]; const l1 = Math.hypot(...v1); v1 = v1.map(v => v / l1 * t / 2);
+    let v2 = [u[1] * v1[2] - u[2] * v1[1], u[2] * v1[0] - u[0] * v1[2], u[0] * v1[1] - u[1] * v1[0]]; const l2 = Math.hypot(...v2); v2 = v2.map(v => v / l2 * t / 2);
+    const C = (p, i, j) => [p[0] + v1[0] * i + v2[0] * j, p[1] + v1[1] * i + v2[1] * j, p[2] + v1[2] * i + v2[2] * j];
+    const ca = [C(a, -1, -1), C(a, 1, -1), C(a, 1, 1), C(a, -1, 1)], cb = [C(b, -1, -1), C(b, 1, -1), C(b, 1, 1), C(b, -1, 1)];
+    for (let k = 0; k < 4; k++) this.quad(ca[k], ca[(k + 1) % 4], cb[(k + 1) % 4], cb[k], col, part);
   }
   geometry() {
     const g = this.g.geometry();
@@ -66,64 +154,118 @@ class VB {
   }
 }
 
-export function carGeo(kind) {
+/** station list helper: [x, y0, yb, yt, wFrac, twFrac, glass] */
+const ST = (W, rows) => rows.map(([x, y0, yb, yt, wf, tf, glass]) => ({ x, y0, yb, yt, w: W * wf, tw: W * tf, glass }));
+
+export function carGeo(kind, lod = 0) {
   const v = new VB();
+  v.lod = lod;
+  const P = [1, 1, 1];
   if (kind === 'hatch' || kind === 'sedan' || kind === 'suv') {
-    const L = kind === 'hatch' ? 1.95 : 2.2, W = kind === 'suv' ? 0.92 : 0.86, yb = kind === 'suv' ? 0.36 : 0.27, yt = kind === 'suv' ? 1.02 : 0.86;
-    v.box(-L, L, yb, yt, -W, W, [1, 1, 1], 1, 'tfkrl');
-    v.box(-L - 0.04, -L + 0.25, yb - 0.05, yb + 0.22, -W - 0.01, W + 0.01, TRIM, 0, 'tkrl'); // rear bumper
-    v.box(L - 0.25, L + 0.04, yb - 0.05, yb + 0.22, -W - 0.01, W + 0.01, TRIM, 0, 'tfrl');   // front bumper
-    const cabTop = kind === 'suv' ? 1.72 : 1.42;
-    if (kind === 'hatch') v.cabin(-L + 0.12, 0.85, -L + 0.3, 0.1, yt, cabTop, W - 0.04, W - 0.16, [1, 1, 1]);
-    else if (kind === 'sedan') v.cabin(-1.25, 0.95, -0.95, 0.2, yt, cabTop, W - 0.04, W - 0.16, [1, 1, 1]);
-    else v.cabin(-L + 0.1, 0.85, -L + 0.2, 0.3, yt, cabTop, W - 0.02, W - 0.1, [1, 1, 1]);
-    v.lights(L + 0.01, -L - 0.01, yt - 0.24, yt - 0.1, W - 0.08, W - 0.36);
-    const wr = kind === 'suv' ? 0.36 : 0.31, wx = L - 0.65;
-    for (const x of [wx, -wx]) for (const z of [W - 0.08, -W + 0.08]) v.wheel(x, z, wr, 0.22);
+    const W = kind === 'suv' ? 0.93 : 0.86;
+    let st;
+    if (kind === 'hatch') st = ST(W, [
+      [-1.95, 0.32, 0.62, 0.66, 0.9, 0.7, null], [-1.9, 0.27, 0.78, 0.86, 0.97, 0.8, null], [-1.82, 0.27, 0.84, 1.1, 1.0, 0.76, 'top'],
+      [-1.6, 0.27, 0.86, 1.4, 1.0, 0.72, 'both'], [-0.2, 0.27, 0.88, 1.45, 1.0, 0.72, 'side'], [0.55, 0.27, 0.88, 1.38, 1.0, 0.74, 'both'],
+      [1.05, 0.27, 0.86, 0.9, 1.0, 0.82, null], [1.7, 0.27, 0.8, 0.82, 0.98, 0.8, null], [1.9, 0.3, 0.7, 0.72, 0.92, 0.75, null], [1.97, 0.36, 0.58, 0.6, 0.84, 0.7, null],
+    ]);
+    else if (kind === 'sedan') st = ST(W, [
+      [-2.2, 0.34, 0.66, 0.7, 0.9, 0.72, null], [-2.12, 0.27, 0.82, 0.88, 0.97, 0.82, null], [-1.65, 0.27, 0.88, 0.95, 1.0, 0.84, null],
+      [-1.25, 0.27, 0.89, 0.98, 1.0, 0.8, 'top'], [-0.8, 0.27, 0.9, 1.4, 1.0, 0.72, 'both'], [0.2, 0.27, 0.9, 1.43, 1.0, 0.72, 'side'],
+      [0.95, 0.27, 0.88, 0.95, 1.0, 0.8, 'both'], [1.7, 0.27, 0.82, 0.86, 0.99, 0.82, null], [2.1, 0.3, 0.72, 0.74, 0.93, 0.76, null], [2.21, 0.36, 0.58, 0.6, 0.84, 0.7, null],
+    ]);
+    else st = ST(W, [
+      [-2.2, 0.42, 0.78, 0.82, 0.92, 0.75, null], [-2.14, 0.36, 0.98, 1.15, 0.98, 0.84, 'top'], [-2.0, 0.36, 1.02, 1.72, 1.0, 0.78, 'both'],
+      [0.3, 0.36, 1.04, 1.76, 1.0, 0.78, 'side'], [0.9, 0.36, 1.02, 1.12, 1.0, 0.84, 'both'], [1.75, 0.36, 0.98, 1.02, 0.99, 0.86, null],
+      [2.12, 0.4, 0.88, 0.9, 0.94, 0.8, null], [2.22, 0.46, 0.7, 0.72, 0.86, 0.72, null],
+    ]);
+    v.loft(st, P);
+    const L = st[st.length - 1].x, Lr = -st[0].x;
+    // bumpers (dark plastic lower band)
+    v.box(L - 0.18, L + 0.02, 0.26, 0.44, -W * 0.88, W * 0.88, TRIM, 0, 'tfrl');
+    v.box(-Lr - 0.02, -Lr + 0.18, 0.26, 0.44, -W * 0.88, W * 0.88, TRIM, 0, 'tkrl');
+    const yl = kind === 'suv' ? 0.78 : 0.66;
+    v.lights(L - 0.005, -Lr + 0.005, yl, yl + 0.13, W * 0.42, W * 0.8);
+    v.mirrors(kind === 'suv' ? 0.75 : 0.85, kind === 'suv' ? 1.02 : 0.88, W * 0.98);
+    v.seams(kind === 'hatch' ? [0.7, -0.45] : kind === 'sedan' ? [0.85, -0.2, -1.15] : [0.85, -0.3, -1.6], 0.32, kind === 'suv' ? 1.02 : 0.88, W * 1.0);
+    const wr = kind === 'suv' ? 0.37 : 0.31, wf = L - 0.68, wb = -Lr + 0.68;
+    for (const x of [wf, wb]) for (const z of [W - 0.1, -W + 0.1]) v.wheel(x, z, wr, 0.22);
+    if (kind === 'suv') { v.box(-1.6, 0.4, 1.78, 1.82, W * 0.62, W * 0.68, TRIM); v.box(-1.6, 0.4, 1.78, 1.82, -W * 0.68, -W * 0.62, TRIM); } // roof rails
   } else if (kind === 'pickup') {
-    const L = 2.25, W = 0.88;
-    v.box(0.1, L, 0.32, 0.95, -W, W, [1, 1, 1], 1, 'tfrl');
-    v.cabin(-0.35, 1.0, -0.25, 0.35, 0.95, 1.62, W - 0.04, W - 0.14, [1, 1, 1]);
-    v.box(-0.35, 0.1, 0.32, 0.95, -W, W, [1, 1, 1], 1, 'rl');
-    // open bed
-    v.box(-L, -0.35, 0.32, 0.55, -W, W, [1, 1, 1], 1, 'tkrl');
-    v.box(-L, -0.35, 0.55, 1.0, W - 0.06, W, [1, 1, 1], 1, 'tkrl');
-    v.box(-L, -0.35, 0.55, 1.0, -W, -W + 0.06, [1, 1, 1], 1, 'tkrl');
-    v.box(-L, -L + 0.06, 0.55, 1.0, -W, W, [1, 1, 1], 1, 'tkfrl');
-    v.lights(L + 0.01, -L - 0.01, 0.7, 0.84, W - 0.08, W - 0.36);
-    for (const x of [1.4, -1.45]) for (const z of [W - 0.08, -W + 0.08]) v.wheel(x, z, 0.36, 0.24);
+    const W = 0.9;
+    v.loft(ST(W, [
+      [-0.45, 0.32, 0.98, 1.05, 1.0, 0.85, null], [-0.4, 0.32, 1.0, 1.62, 1.0, 0.76, 'both'], [0.55, 0.32, 1.0, 1.66, 1.0, 0.76, 'side'],
+      [1.15, 0.32, 0.98, 1.06, 1.0, 0.85, 'both'], [1.95, 0.32, 0.94, 0.98, 0.99, 0.86, null], [2.25, 0.38, 0.8, 0.82, 0.92, 0.78, null], [2.32, 0.46, 0.62, 0.64, 0.85, 0.72, null],
+    ]), P);
+    // open bed (cargo box) with walls and tailgate
+    v.box(-2.3, -0.45, 0.32, 0.6, -W, W, TRIM, 0, 'tkrl');
+    v.box(-2.3, -0.45, 0.6, 1.0, W - 0.07, W, P, 1, 'tkrl');
+    v.box(-2.3, -0.45, 0.6, 1.0, -W, -W + 0.07, P, 1, 'tkrl');
+    v.box(-2.3, -2.22, 0.45, 1.0, -W, W, P, 1, 'tkfrl');
+    v.box(-0.5, -0.45, 0.6, 1.0, -W, W, P, 1, 'tk');
+    v.box(2.25, 2.36, 0.3, 0.5, -W * 0.9, W * 0.9, TRIM, 0, 'tfrl');
+    v.lights(2.32, -2.31, 0.72, 0.9, W * 0.42, W * 0.82);
+    v.mirrors(1.0, 1.02, W);
+    v.seams([1.0, 0.25], 0.36, 1.0, W);
+    for (const x of [1.55, -1.55]) for (const z of [W - 0.1, -W + 0.1]) v.wheel(x, z, 0.37, 0.25);
   } else if (kind === 'moto') {
-    v.wheel(0.68, 0.06, 0.3, 0.1, 8); v.wheel(-0.68, 0.06, 0.3, 0.1, 8);
-    v.box(-0.55, 0.6, 0.42, 0.72, -0.13, 0.13, [1, 1, 1], 1);           // tank / body
-    v.box(-0.75, -0.1, 0.72, 0.8, -0.14, 0.14, SEAT);                   // seat
-    v.box(0.55, 0.62, 0.7, 1.02, -0.36, 0.36, TRIM);                    // handlebar
-    v.box(0.62, 0.7, 0.8, 0.92, -0.08, 0.08, HEAD, 2, 'f');             // headlight
-    v.box(-0.8, -0.74, 0.74, 0.8, -0.06, 0.06, TAIL, 3, 'k');
-    // rider: legs, torso, helmet
-    v.box(-0.35, 0.15, 0.62, 0.95, -0.2, 0.2, srgb(40, 50, 80));
-    v.box(-0.32, 0.05, 0.95, 1.45, -0.2, 0.2, srgb(90, 92, 98));
-    v.box(-0.24, 0.06, 1.48, 1.74, -0.13, 0.13, [1, 1, 1], 1);           // helmet takes the paint colour
+    const DARK = srgb(30, 30, 32), JEANS = srgb(52, 66, 100), SHIRT = [srgb(200, 60, 40), srgb(240, 240, 235), srgb(40, 40, 44), srgb(40, 90, 160)][0], SKIN = srgb(180, 130, 100);
+    for (const zz of [0.001, -0.001]) { v.wheel(0.66, zz, 0.3, 0.1, 12, false); v.wheel(-0.66, zz, 0.3, 0.11, 12, false); }
+    // fork + frame + swingarm
+    v.beam([0.66, 0.3, 0.06], [0.48, 0.92, 0.07], 0.05, CHROME); v.beam([0.66, 0.3, -0.06], [0.48, 0.92, -0.07], 0.05, CHROME);
+    v.beam([0.48, 0.88, 0], [-0.2, 0.62, 0], 0.08, DARK); v.beam([-0.66, 0.3, 0.08], [-0.05, 0.42, 0.08], 0.05, DARK); v.beam([-0.66, 0.3, -0.08], [-0.05, 0.42, -0.08], 0.05, DARK);
+    // engine block, exhaust, fenders
+    v.box(-0.2, 0.25, 0.25, 0.55, -0.12, 0.12, srgb(70, 72, 76));
+    v.beam([0.1, 0.3, -0.13], [-0.75, 0.42, -0.17], 0.08, CHROME);
+    v.box(0.5, 0.86, 0.6, 0.64, -0.07, 0.07, P, 1); v.box(-0.9, -0.5, 0.64, 0.68, -0.08, 0.08, P, 1);
+    // tank (paint) + seat + tail
+    v.loft(ST(0.15, [[-0.05, 0.62, 0.74, 0.82, 0.8, 0.6, null], [0.15, 0.62, 0.78, 0.92, 1.0, 0.75, null], [0.42, 0.66, 0.8, 0.9, 0.85, 0.6, null]]), P);
+    v.box(-0.6, -0.05, 0.72, 0.8, -0.13, 0.13, SEAT);
+    v.box(-0.85, -0.6, 0.66, 0.78, -0.1, 0.1, P, 1);
+    v.box(-0.88, -0.84, 0.7, 0.76, -0.06, 0.06, TAIL, 3, 'k');
+    // handlebar, headlight, mirrors
+    v.beam([0.46, 1.0, -0.34], [0.46, 1.0, 0.34], 0.03, TRIM);
+    v.box(0.5, 0.64, 0.82, 0.96, -0.08, 0.08, P, 1); v.box(0.64, 0.66, 0.84, 0.94, -0.06, 0.06, HEAD, 2, 'f');
+    // rider: legs, torso, arms, helmet
+    for (const s of [-1, 1]) {
+      v.beam([-0.25, 0.84, s * 0.13], [0.15, 0.82, s * 0.2], 0.15, JEANS);        // thigh
+      v.beam([0.15, 0.82, s * 0.2], [0.05, 0.4, s * 0.2], 0.13, JEANS);            // shin
+      v.box(0.0, 0.22, 0.3, 0.42, s > 0 ? 0.14 : -0.26, s > 0 ? 0.26 : -0.14, DARK); // shoe
+      v.beam([-0.12, 1.38, s * 0.2], [0.18, 1.12, s * 0.24], 0.1, SHIRT);          // upper arm
+      v.beam([0.18, 1.12, s * 0.24], [0.44, 1.02, s * 0.3], 0.09, SKIN);           // forearm
+    }
+    v.beam([-0.28, 0.86, 0], [-0.12, 1.42, 0], 0.36, SHIRT);                      // torso
+    v.sphere(-0.06, 1.6, 0, 0.15, P, 1);                                         // helmet (paint colour)
+    v.box(0.05, 0.1, 1.54, 1.64, -0.1, 0.1, GLASS, 4);                             // visor
   } else if (kind === 'bus') {
-    const L = 6.0, W = 1.25;
-    v.box(-L, L, 0.45, 3.1, -W, W, [1, 1, 1], 1, 'tfkrl');
-    // window band
-    for (const s of [-1, 1]) v.box(-L + 0.6, L - 0.3, 1.55, 2.6, s * W - 0.02, s * W + 0.02, GLASS, 0, s > 0 ? 'l' : 'r');
-    v.box(L, L + 0.02, 1.3, 2.75, -W + 0.1, W - 0.1, GLASS, 0, 'f');
-    for (const s of [-1, 1]) v.box(-L + 0.1, L - 0.1, 0.95, 1.25, s * W - 0.025, s * W + 0.025, srgb(250, 200, 40), 0, s > 0 ? 'l' : 'r'); // livery stripe
-    v.box(-2.0, 1.0, 3.1, 3.35, -0.8, 0.8, srgb(210, 210, 210));                                                                       // roof A/C
-    v.box(L - 0.1, L + 0.03, 2.8, 3.0, -W + 0.2, W - 0.2, srgb(240, 160, 30), 2, 'f'); // destination sign
-    v.lights(L + 0.01, -L - 0.01, 0.75, 0.95, W - 0.1, W - 0.4);
-    for (const x of [L - 1.4, -L + 2.0]) for (const z of [W - 0.1, -W + 0.1]) v.wheel(x, z, 0.5, 0.3, 10);
+    const L = 6.0, W = 1.27;
+    v.loft(ST(W, [
+      [-L, 0.42, 1.3, 3.12, 1.0, 0.93, null], [-L + 0.5, 0.42, 1.45, 3.2, 1.0, 0.95, 'side'], [L - 0.7, 0.42, 1.45, 3.2, 1.0, 0.95, 'side'], [L - 0.15, 0.42, 1.25, 3.1, 1.0, 0.93, null], [L, 0.45, 1.0, 2.9, 0.98, 0.9, null],
+    ]), P);
+    v.box(L - 0.02, L + 0.01, 1.2, 2.75, -W + 0.12, W - 0.12, GLASS, 4, 'f');                                 // windscreen
+    v.box(-L - 0.01, -L + 0.02, 1.7, 2.8, -W + 0.2, W - 0.2, GLASS, 4, 'k');
+    for (let x = -L + 1.3; x < L - 0.8; x += 1.6) for (const s of [-1, 1]) v.box(x - 0.06, x + 0.06, 1.45, 2.85, s > 0 ? W * 0.99 : -W * 0.99 - 0.01, s > 0 ? W * 0.99 + 0.01 : -W * 0.99, P, 1, s > 0 ? 'l' : 'r'); // window pillars
+    for (const s of [-1, 1]) v.box(-L + 0.1, L - 0.1, 0.95, 1.2, s * W - 0.02, s * W + 0.02, srgb(250, 200, 40), 0, s > 0 ? 'l' : 'r'); // livery stripe
+    v.box(L - 1.6, L - 0.5, 0.45, 2.8, -W - 0.015, -W + 0.01, GLASS, 4, 'r');                              // front door (right side)
+    v.box(-2.0, 1.0, 3.2, 3.45, -0.8, 0.8, srgb(210, 210, 210));
+    v.box(L - 0.03, L + 0.03, 2.82, 3.02, -W + 0.2, W - 0.2, srgb(240, 160, 30), 2, 'f');
+    v.lights(L + 0.01, -L - 0.01, 0.7, 0.92, W * 0.6, W * 0.9);
+    v.mirrors(L - 0.2, 2.2, W);
+    for (const x of [L - 1.5, -L + 2.1]) for (const z of [W - 0.12, -W + 0.12]) v.wheel(x, z, 0.5, 0.3, 12);
   } else if (kind === 'truck') {
-    const W = 1.2;
-    v.box(2.2, 3.9, 0.55, 2.6, -W, W, [1, 1, 1], 1, 'tfkrl');                // cab
-    v.box(3.88, 3.92, 1.5, 2.4, -W + 0.1, W - 0.1, GLASS, 0, 'f');
-    v.box(-3.9, 2.05, 0.9, 3.4, -W - 0.05, W + 0.05, srgb(214, 210, 200), 0);  // cargo box
-    v.box(-3.9, 3.9, 0.55, 0.9, -W + 0.2, W - 0.2, TRIM);
-    v.lights(3.91, -3.91, 0.8, 1.0, W - 0.1, W - 0.4);
-    for (const x of [3.0, -1.8, -3.0]) for (const z of [W - 0.15, -W + 0.15]) v.wheel(x, z, 0.52, 0.34, 10);
+    const W = 1.22;
+    v.loft(ST(W, [[2.2, 0.55, 1.6, 2.65, 1.0, 0.92, null], [2.3, 0.55, 1.62, 2.7, 1.0, 0.92, 'side'], [3.55, 0.55, 1.6, 2.68, 1.0, 0.92, 'both'], [3.95, 0.6, 1.4, 1.5, 0.98, 0.9, null]]), P);
+    v.box(-3.9, 2.05, 0.95, 3.45, -W - 0.05, W + 0.05, srgb(214, 210, 200), 0);  // cargo box
+    for (let x = -3.6; x < 2; x += 0.7) for (const s of [-1, 1]) v.box(x - 0.03, x + 0.03, 0.95, 3.45, s > 0 ? W + 0.05 : -W - 0.07, s > 0 ? W + 0.07 : -W - 0.05, srgb(180, 176, 168), 0, s > 0 ? 'l' : 'r');
+    v.box(-3.9, 3.9, 0.55, 0.95, -W + 0.2, W - 0.2, TRIM);
+    v.box(3.9, 4.0, 0.5, 0.8, -W, W, TRIM, 0, 'tfrl');
+    v.lights(3.96, -3.92, 0.85, 1.05, W * 0.55, W * 0.88);
+    v.mirrors(3.6, 2.1, W);
+    for (const x of [3.05, -1.8, -3.0]) for (const z of [W - 0.15, -W + 0.15]) v.wheel(x, z, 0.52, 0.34, 12);
   }
-  return v.geometry();
+  const g = v.geometry();
+  g.computeBoundingSphere();
+  return g;
 }
 
 const DIMS = { hatch: 3.9, sedan: 4.4, suv: 4.4, pickup: 4.5, moto: 2.0, bus: 12, truck: 7.8 };
@@ -151,8 +293,16 @@ function vehicleMaterial(uniforms) {
   vPart = part;`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying float vPart;\nuniform float uLights;')
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+  if (vPart > 3.5) metalnessFactor = 0.2;
+  else if (vPart > 0.5 && vPart < 1.5) metalnessFactor = 0.45;
+  else metalnessFactor = 0.05;`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+  if (vPart > 3.5) roughnessFactor = 0.06;
+  else if (vPart > 0.5 && vPart < 1.5) roughnessFactor = 0.3;
+  else roughnessFactor = 0.75;`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-  if (vPart > 1.5) {
+  if (vPart > 1.5 && vPart < 3.5) {
     float head = step(vPart, 2.5);
     totalEmissiveRadiance += mix(vec3(1.6, 0.05, 0.03) * 0.8, vec3(2.4, 2.3, 2.0), head) * uLights;
   }`);
@@ -287,7 +437,7 @@ export class Traffic {
         this.group.add(im); this.group.add(blob);
       }
       if (countsP[kind]) {
-        const im = new THREE.InstancedMesh(geo, mat, countsP[kind]);
+        const im = new THREE.InstancedMesh(carGeo(kind, 1), mat, countsP[kind]); // parked: lighter model
         im.castShadow = Q === 'high' || Q === 'ultra'; im.receiveShadow = true;
         let n = 0;
         for (const p of this.parked) {

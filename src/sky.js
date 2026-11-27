@@ -213,7 +213,8 @@ export class DayCycle {
     }
     this.hemi.color.copy(zen).lerp(new THREE.Color(0.8, 0.88, 1), 0.45 * day).lerp(new THREE.Color(0.25, 0.32, 0.55), this.night * 0.6);
     this.hemi.groundColor.setRGB(0.42, 0.36, 0.26).multiplyScalar(0.25 + 0.75 * day);
-    this.hemi.intensity = lerp(0.25, 1.1, day);
+    // stronger sky fill: faces turned away from the sun (and the shade under the viaducts) were too dark
+    this.hemi.intensity = lerp(0.25, 1.45, day);
     this.sunBase = this.sun.intensity; this.hemiBase = this.hemi.intensity;
     this.scene.fog.color.copy(hor);
     this.renderer.toneMappingExposure = lerp(1.1, 0.82, day);

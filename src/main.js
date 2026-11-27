@@ -10,7 +10,7 @@ import { legacy as L } from './legacy/legacy.js';
 import { nextFrame, segDist } from './util.js';
 import { placeLamps, buildLamps, patchTreeNight, patchNightLight } from './lamps.js';
 import { buildTrees } from './trees.js';
-import { buildRoads, asphaltTexture, settTexture } from './roads.js';
+import { buildRoads, asphaltTexture, settTexture, retainingWallTexture } from './roads.js';
 import { Traffic } from './traffic.js';
 import { buildRailLite } from './rail.js';
 import { buildBuildings } from './buildings.js';
@@ -235,7 +235,7 @@ async function main() {
   const viaduct = L.buildViaductVale(city, T, scene, rail.paths);
   const viaduct2 = L.buildViaductCentro(city, T, scene, rail.paths);
   L.buildClub(city, T, scene);
-  { const st = buildStationV6(city, T, city.rail[0].pts); if (st) scene.add(st); }
+  { const st = buildStationV6(city, T, city.rail[0].pts, roadEdge); if (st) scene.add(st); }
   {
     // loteamento streets: paralelepípedo like every other street in town (no dirt)
     const lote = L.buildLote(city, T, scene);
@@ -320,10 +320,20 @@ async function main() {
       for (let i = 0; i < d.length; i += 4 * 97) { s += d[i]; n++; }
       return s / n < 95;
     };
+    // retaining walls of the viaduto principal: light formwork concrete (was a dark grey texture)
+    if (viaduct2 && viaduct2.group) {
+      const wt = retainingWallTexture();
+      viaduct2.group.traverse(o => {
+        if (!o.isMesh || !o.material || !o.material.color || o.material.color.getHexString() !== 'd8d4cc') return;
+        o.material.map = wt.map; o.material.normalMap = wt.normalMap; o.material.normalScale.set(0.8, 0.8);
+        o.material.color.setRGB(1, 1, 1); o.material.roughness = 0.88; o.material.needsUpdate = true;
+        o.userData.keepMap = true;
+      });
+    }
     for (const g of [viaduct.group, viaduct2 && viaduct2.group]) {
       if (!g) continue;
       g.traverse(o => {
-        if (!o.isMesh || !o.material || !o.material.map) return;
+        if (!o.isMesh || !o.material || !o.material.map || o.userData.keepMap) return;
         const im = o.material.map.image;
         const legacyRoad = im && !im.data && im.width === 512 && o.material.map !== nu.map; // old road canvas
         if (!legacyRoad && !dark(o.material.map)) return;
@@ -397,7 +407,8 @@ async function main() {
   // most scenic stretch: the natural channel through the Triângulo woods
   // most scenic stretch of the Córrego da Natividade: the wooded corridor east of the Estádio
   const creekPt = (() => { const cr = (city.creeks || [])[0]; if (!cr) return [-560, 0, -200]; const cp = cr.pts; const p = cp.find(q => q[1] < 250 && q[1] > 150 && q[4] === 0) || cp[cp.length >> 1]; return [p[0], 0, p[1]]; })();
-  const canalPt = (() => { const cr = (city.creeks || []).find(c => c.name.startsWith('Canal')); if (!cr) return creekPt; const p = cr.pts[Math.floor(cr.pts.length * 0.12)]; return [p[0], 0, p[1]]; })();
+  // Córrego do Triângulo: the open natural stretch along the wooded hill of the club (Vila Tiago)
+  const canalPt = (() => { const cr = (city.creeks || []).find(c => c.name === 'Córrego do Triângulo'); if (!cr) return creekPt; const p = cr.pts.find(q => q[1] < 60 && q[1] > 0 && q[4] === 0) || cr.pts[Math.floor(cr.pts.length * 0.6)]; return [p[0], 0, p[1]]; })();
   const views = {
     geral: { t: [-120, 0, 120], d: 2300, pol: 0.95, az: -0.35 },
     residencial: { t: [nbLabel('Nilton Freire Sampaio')[0], 0, nbLabel('Nilton Freire Sampaio')[1]], d: 380, pol: 0.85, az: -0.3 },

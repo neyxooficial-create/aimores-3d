@@ -206,18 +206,51 @@ const creeks = [];
     const res = buildCreek(withAcc(tribLine, 300, 1500), ctxBase, { name: 'Afluente do Natividade', wMin: 1.2, wMax: 2.0, smooth: 2, displace: false, joinLevel: join });
     creeks.push(res.creek); log('creek afluente', res.stats);
   }
-  // ---- 2) Canal do Triângulo: from the viaduto do Centro, past the Capela Mortuária, east along
-  //         the railway (seen on the album photos), then north under the Centro to the Rio Doce
-  //         following the valley line of the hydrology pass (source/creek_raw.json).
-  const fixFile = path.join(SRC, 'canal_triangulo.json');
-  if (fs.existsSync(fixFile) && fs.existsSync(path.join(SRC, 'creek_raw.json'))) {
-    const canal = JSON.parse(fs.readFileSync(fixFile, 'utf8'));
-    const raw = JSON.parse(fs.readFileSync(path.join(SRC, 'creek_raw.json'), 'utf8'));
-    const k = raw.findIndex(p => Math.hypot(p[0] - canal.joinHydro[0], p[1] - canal.joinHydro[1]) < 20);
-    const head = canal.pts.map(([x, z], i, a) => [x, z, 0, 400 + 600 * i / a.length]);
-    const tail = raw.slice(k).map(p => [p[0], p[1], p[2], Math.max(1000, p[3] / 40)]);
-    const res = buildCreek(head.concat(tail), ctxBase, { name: 'Canal do Triângulo', wMin: 1.6, wMax: 2.6, toRiver: true, smooth: 3 });
-    creeks.push(res.creek); log('creek canal', res.stats);
+  // ---- 2) Córrego do Triângulo (S1 "Vale da Rotatória", reference PDF): from the hill SW of the
+  //         Residencial down the grota, across the avenue, along the wooded hill of the club, east
+  //         of the rotatória, under the railway and (galeria) under the Centro to the Natividade.
+  //         The canal seen on the photos at the foot of the viaduto do Centro is a tributary of it.
+  const s1File = path.join(SRC, 'corrego_triangulo.json');
+  if (fs.existsSync(s1File)) {
+    const s1 = JSON.parse(fs.readFileSync(s1File, 'utf8')).pts;
+    // the digitized line stops short of the Natividade: run it into the nearest point of its bed
+    if (mainCreek) {
+      const e = s1[s1.length - 1]; let bq = null, bd = 1e9;
+      for (const q of mainCreek.pts) { const d = Math.hypot(q[0] - e[0], q[1] - e[1]); if (d < bd) { bd = d; bq = q; } }
+      if (bq && bd < 90) s1.push([bq[0], bq[1]]);
+    }
+    const levelNear = (cr, x, z) => { let bd = 1e9, lv = -1e9; for (const q of cr.pts) { const d = Math.hypot(q[0] - x, q[1] - z); if (d < bd) { bd = d; lv = q[2]; } } return lv; };
+    // railway side test: the Centro (north of the tracks) has the creek in a galeria
+    const railSegs = [];
+    for (const rl of C.rail) for (let i = 0; i < rl.pts.length - 1; i++) railSegs.push([rl.pts[i], rl.pts[i + 1]]);
+    const northOfRail = (x, z) => {
+      let best = null;
+      for (const [a, b] of railSegs) { const q = segPointDist(x, z, a[0], a[1], b[0], b[1]); if (!best || q.d < best.q.d) best = { q, a, b }; }
+      if (!best) return false;
+      let { a, b } = best; if (b[0] < a[0]) [a, b] = [b, a];
+      return (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]) < 0 && best.q.d > 4;
+    };
+    const end = s1[s1.length - 1];
+    const culvert = (x, z) => northOfRail(x, z) && Math.hypot(x - end[0], z - end[1]) > 28;
+    const join = mainCreek ? levelNear(mainCreek, end[0], end[1]) : -1e9;
+    const res = buildCreek(withAcc(s1, 300, 7000), ctxBase, { name: 'Córrego do Triângulo', wMin: 1.3, wMax: 3.0, smooth: 2, displace: false, joinLevel: join, culvert });
+    const s1c = res.creek; creeks.push(s1c); log('creek Triângulo (S1)', res.stats);
+    // canal do viaduto: from the foot of the viaduto ramp east along the railway to S1
+    const fixFile = path.join(SRC, 'canal_triangulo.json');
+    if (fs.existsSync(fixFile)) {
+      const canal = JSON.parse(fs.readFileSync(fixFile, 'utf8'));
+      let pts = canal.pts.slice();
+      // stop where it reaches the S1 corridor, ending exactly on S1
+      let k = pts.findIndex(p => s1c.pts.some(q => Math.hypot(q[0] - p[0], q[1] - p[1]) < 14));
+      if (k < 0) k = pts.length - 1;
+      pts = pts.slice(0, k + 1);
+      const tip = pts[pts.length - 1];
+      let bq = null, bd = 1e9; for (const q of s1c.pts) { const d = Math.hypot(q[0] - tip[0], q[1] - tip[1]); if (d < bd) { bd = d; bq = q; } }
+      pts.push([bq[0], bq[1]]);
+      const head = pts.map(([x, z], i, a) => [x, z, 0, 300 + 900 * i / a.length]);
+      const r2 = buildCreek(head, ctxBase, { name: 'Canal do Viaduto', wMin: 1.4, wMax: 2.2, smooth: 3, joinLevel: bq[2] });
+      creeks.push(r2.creek); log('creek canal do viaduto', r2.stats);
+    }
   }
   // clear trees standing in any water / on the canal walls
   const n0 = trees.length;
@@ -248,6 +281,28 @@ const creeks = [];
       if (it.p !== it.b.p) { it.b.p = it.p.map(([x, z]) => [round(x), round(z)]); it.b.k = it.kind === 'rect' ? undefined : it.kind; }
     }
     log('buildings vs creeks', st, '->', buildings.length);
+  }
+  // walls / gates must not cross an open creek bed (they hung across the carved valley)
+  {
+    const cs = [];
+    for (const cr of creeks) for (let i = 0; i < cr.pts.length - 1; i++) {
+      const a = cr.pts[i], b = cr.pts[i + 1];
+      if (a[4] === 2 && b[4] === 2) continue;
+      cs.push([a[0], a[1], b[0], b[1], Math.max(a[3], b[3]) / 2 + (a[4] === 1 ? 1.2 : 2.8)]);
+    }
+    const cg = new Grid(25);
+    for (const c of cs) cg.addBox(c, Math.min(c[0], c[2]) - c[4], Math.min(c[1], c[3]) - c[4], Math.max(c[0], c[2]) + c[4], Math.max(c[1], c[3]) + c[4]);
+    const hits = w => {
+      const L = Math.hypot(w[2] - w[0], w[3] - w[1]), n = Math.max(1, Math.ceil(L / 0.8));
+      for (let k = 0; k <= n; k++) {
+        const x = w[0] + (w[2] - w[0]) * k / n, z = w[1] + (w[3] - w[1]) * k / n;
+        for (const c of cg.query(x, z, 8)) if (segPointDist(x, z, c[0], c[1], c[2], c[3]).d < c[4]) return true;
+      }
+      return false;
+    };
+    const n0 = C.walls.length, g0 = C.gates.length;
+    C.walls = C.walls.filter(w => !hits(w)); C.gates = C.gates.filter(w => !hits(w));
+    log('walls across creeks removed', n0 - C.walls.length, 'gates', g0 - C.gates.length);
   }
 }
 

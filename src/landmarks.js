@@ -498,7 +498,7 @@ function stationTextures() {
   return { block: tex(c1), wing: tex(c2), ped: tex(c3), totem: tex(c4) };
 }
 
-export function buildStation(city, T, railPts) {
+export function buildStation(city, T, railPts, roadEdge = null) {
   const st = city.extras.station;
   if (!st) return null;
   const g = new THREE.Group(); g.name = 'estacao';
@@ -516,14 +516,30 @@ export function buildStation(city, T, railPts) {
     for (const q of railPts) { const d = Math.hypot(q[0] - cx, q[1] - cz); if (d < bd) { bd = d; bp = q; } }
     if (bp && (bp[0] - cx) * fx + (bp[1] - cz) * fz > 0) { fx = -fx; fz = -fz; }
   }
-  const y0 = T.at(cx, cz) + 0.25;
-  const P = frame(cx, cz, fx, fz, y0);
   // local x runs along the track; pick the sign so that x = (ux,uz)
   const sx = (fz * ux - fx * uz) > 0 ? 1 : -1; // right vector = (fz, -fx)
   const X = x => x * sx;
+  const half = L / 2, d = Math.min(9, W * 0.7);
+  // street-side clearance: the viaduct ramp (rampa leste) passes right in front of the station.
+  // clear(x) = how far forward (local z) we can build at local x before reaching a carriageway
+  // (+1.3 m for the viaduct barrier / kerb). The whole station slides towards the tracks if needed.
+  const worldAt = (x, z) => [cx + fz * x + fx * z, cz - fx * x + fz * z];
+  const clear = x => {
+    if (!roadEdge) return 99;
+    for (let z = 0; z < 20; z += 0.25) { const [wx, wz] = worldAt(x, z); if (roadEdge(wx, wz) < 1.3) return z; }
+    return 20;
+  };
+  let shift = 0;
+  for (let x = -half; x <= half; x += 2) shift = Math.min(shift, clear(X(x)) - d / 2 - 0.4);
+  shift = Math.max(shift, -3);
+  g.userData.shift = shift;
+  const cx0 = cx, cz0 = cz;
+  const ccx = cx0 + fx * shift, ccz = cz0 + fz * shift;
+  const y0 = T.at(ccx, ccz) + 0.25;
+  const P = frame(ccx, ccz, fx, fz, y0);
+  const clearS = x => clear(x) - shift; // clearance in the shifted frame
   const tx = stationTextures();
   const blk = new GeoBuilder(true, true), wing = new GeoBuilder(true, true), ped = new GeoBuilder(true, true), plain = new GeoBuilder(true, false), roofG = new GeoBuilder(true, true);
-  const half = L / 2, d = Math.min(9, W * 0.7);
   // two-storey block at the west end (x from -half to -half+10)
   const bx0 = X(-half), bx1 = X(-half + 10);
   const xa = Math.min(bx0, bx1), xb = Math.max(bx0, bx1);
@@ -567,17 +583,27 @@ export function buildStation(city, T, railPts) {
   const pz0 = -d / 2 - 5.2, pz1 = -d / 2 + 0.5;
   boxL(plain, P, Math.min(xa, wa) - 6, Math.max(xb, wb) + 6, -1.0, 0.0, pz0, pz1, srgb(176, 172, 166));
   boxL(plain, P, Math.min(xa, wa) - 6, Math.max(xb, wb) + 6, 0.0, 0.02, pz0 + 0.2, pz0 + 0.6, srgb(236, 196, 40));
-  // street-side forecourt paving + teal ramp railings
-  boxL(plain, P, xa - 4, wb, -0.6, 0.0, d / 2, d / 2 + 6, srgb(190, 182, 172));
+  // street-side forecourt paving (only up to the street / viaduct) + teal ramp railings + totem
+  let bestX = null, bestC = -1;
+  for (let x = Math.min(xa, wa) - 4; x < Math.max(xb, wb); x += 2) {
+    const c = Math.min(clearS(x), clearS(x + 2), d / 2 + 6);
+    if (c > d / 2 + 0.3) boxL(plain, P, x, x + 2, -0.6, 0.0, d / 2, c, srgb(190, 182, 172));
+    if (c > bestC + 0.01 && x > Math.min(xa, wa) - 4 && x + 10 < Math.max(xb, wb)) { bestC = c; bestX = x; }
+  }
   const rail = srgb(40, 150, 140);
-  for (let k = 0; k < 4; k++) {
-    const z = d / 2 + 1.2 + k * 1.2;
-    boxL(plain, P, xa + 1, xa + 9, 0.95, 1.02, z, z + 0.06, rail);
-    for (let x = xa + 1; x <= xa + 9; x += 2) boxL(plain, P, x, x + 0.06, 0, 1.0, z, z + 0.06, rail);
+  let rx0 = xa + 1;
+  if (Math.min(clearS(rx0), clearS(rx0 + 8)) < d / 2 + 5.4 && bestX !== null) rx0 = bestX;
+  if (Math.min(clearS(rx0), clearS(rx0 + 8)) >= d / 2 + 5.4) {
+    for (let k = 0; k < 4; k++) {
+      const z = d / 2 + 1.2 + k * 1.2;
+      boxL(plain, P, rx0, rx0 + 8, 0.95, 1.02, z, z + 0.06, rail);
+      for (let x = rx0; x <= rx0 + 8; x += 2) boxL(plain, P, x, x + 0.06, 0, 1.0, z, z + 0.06, rail);
+    }
   }
   // totem
   const tot = new GeoBuilder(true, true);
-  const tX = xa - 3, tZ = d / 2 + 4;
+  let tX = xa - 3, tZ = d / 2 + 4;
+  if (clearS(tX) < tZ + 1) { tX = bestX !== null ? bestX + 1 : tX; tZ = Math.max(d / 2 + 1, Math.min(tZ, clearS(tX) - 1)); }
   tot.quad(P(tX - 0.5, 0, tZ), P(tX + 0.5, 0, tZ), P(tX + 0.5, 4, tZ), P(tX - 0.5, 4, tZ), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
   tot.quad(P(tX + 0.5, 0, tZ - 0.25), P(tX - 0.5, 0, tZ - 0.25), P(tX - 0.5, 4, tZ - 0.25), P(tX + 0.5, 4, tZ - 0.25), [0, 0], [1, 0], [1, 1], [0, 1], [1, 1, 1]);
   boxL(plain, P, tX - 0.5, tX + 0.5, 0, 4, tZ - 0.25, tZ, srgb(31, 143, 134));

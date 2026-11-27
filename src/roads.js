@@ -16,7 +16,7 @@ function finish(W, H, rgb, height, strength, rough = null) {
   const map = new THREE.CanvasTexture(c);
   map.colorSpace = THREE.SRGBColorSpace;
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
-  map.anisotropy = 8;
+  map.anisotropy = 16; // clamped by the GPU; keeps the paving crisp at grazing angles
   const normalMap = normalFromHeight(height, W, H, strength);
   let roughnessMap = null;
   if (rough) {
@@ -106,6 +106,31 @@ export function asphaltTexture(S = 512) {
   }
   TEX.asphalt = finish(S, S, rgb, hgt, 0.7);
   return TEX.asphalt;
+}
+
+/** Retaining wall (muro de contenção) of the viaducts: light formwork concrete, vertical panel
+ *  joints, board marks, a weep hole per panel and rain streaks. Texture covers 3 m x 3 m. */
+export function retainingWallTexture(S = 512) {
+  if (TEX.wall) return TEX.wall;
+  const n1 = valueNoise(64, 61), n2 = valueNoise(8, 63), n3 = valueNoise(32, 67);
+  const rgb = new Uint8ClampedArray(S * S * 4), hgt = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = y * S + x;
+    const jx = Math.min(x, S - x);                      // vertical panel joint at the tile edge
+    const board = (y % (S / 5));                        // board marks every 0.6 m
+    const hx = x - S / 2, hy = y - S * 0.15;            // weep hole near the bottom (v grows upward)
+    const hole = hx * hx + hy * hy < 36;
+    const streak = Math.pow(fbm(n3, x / 6, y / 90, 3), 3) * 0.55;   // vertical rain stains
+    let v = 196 + 18 * fbm(n1, x / 3, y / 3, 3) + 10 * fbm(n2, x / 40, y / 40, 2);
+    v *= 1 - streak * 0.35;
+    if (board < 2) v *= 0.9;
+    if (jx < 3) v *= 0.72;
+    if (hole) v = 60;
+    rgb[i * 4] = v; rgb[i * 4 + 1] = v * 0.985; rgb[i * 4 + 2] = v * 0.955; rgb[i * 4 + 3] = 255;
+    hgt[i] = 0.3 * fbm(n1, x / 2, y / 2, 2) - (jx < 3 ? 1.2 : 0) - (board < 2 ? 0.35 : 0) - (hole ? 2 : 0);
+  }
+  TEX.wall = finish(S, S, rgb, hgt, 1.2);
+  return TEX.wall;
 }
 
 /** Red laterite dirt with pebbles. Texture covers 6 m. */

@@ -42,7 +42,8 @@ function resample(p, step) {
  * @param raw     [[x,z,h,acc]] upstream->mouth   (acc only sets the relative width)
  * @param ctx     { meta, height(Uint16 grid, mutated), roads, rail, buildings, at(x,z) }
  * @param opts    { name, wMin, wMax, toRiver (extend into the river), smooth (chaikin passes),
- *                  displace (move off parallel streets), joinLevel (water level at the mouth) }
+ *                  displace (move off parallel streets), joinLevel (water level at the mouth),
+ *                  culvert(x, z) -> true where the stream runs in a galeria (forced) }
  */
 export function buildCreek(raw, ctx, opts = {}) {
   const { meta, roads, rail, buildings } = ctx;
@@ -157,7 +158,8 @@ export function buildCreek(raw, ctx, opts = {}) {
   });
   for (const s of S) {
     const half = s.w / 2 + 1.2;
-    if (s.roadD < half || s.railD < half + 1.5 || s.bldD < half) s.mode = 2;
+    if (opts.culvert && opts.culvert(s.x, s.z)) s.mode = 2;
+    else if (s.roadD < half || s.railD < half + 1.5 || s.bldD < half) s.mode = 2;
     else if (s.bldD < 9 || s.roadD < 4) s.mode = 1;
     else s.mode = 0;
   }
